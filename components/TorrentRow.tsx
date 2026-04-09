@@ -28,7 +28,7 @@ const STATE_STYLES: Record<string, string> = {
 
 const STATE_LABELS: Record<string, string> = {
   uploading: 'Seeding',
-  stalledUP: 'Stalled (up)',
+  stalledUP: 'Seeding (idle)',   // active seed, no peers downloading right now — normal on private trackers
   forcedUP: 'Seeding (forced)',
   checkingUP: 'Checking',
   queuedUP: 'Queued',

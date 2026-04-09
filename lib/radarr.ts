@@ -35,12 +35,15 @@ export async function getRadarrMovies(): Promise<RadarrMovie[]> {
 }
 
 export async function getRadarrStatus(): Promise<ServiceStatus> {
-  if (!BASE_URL || !API_KEY) {
+  if (!BASE_URL) {
+    return { name: 'Radarr', url: '', connected: false, error: 'RADARR_URL not set' };
+  }
+  if (!API_KEY) {
     return {
       name: 'Radarr',
       url: BASE_URL,
       connected: false,
-      error: 'URL or API key not configured',
+      error: 'RADARR_API_KEY is empty — check for a trailing space in the variable name on Unraid',
     };
   }
 
@@ -48,12 +51,11 @@ export async function getRadarrStatus(): Promise<ServiceStatus> {
     const data = await radarrFetch<{ version: string }>('/system/status');
     return { name: 'Radarr', url: BASE_URL, connected: true, version: data.version };
   } catch (err) {
-    return {
-      name: 'Radarr',
-      url: BASE_URL,
-      connected: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
-    };
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    const hint = msg.includes('401')
+      ? `${msg} — wrong API key (check Radarr → Settings → General)`
+      : msg;
+    return { name: 'Radarr', url: BASE_URL, connected: false, error: hint };
   }
 }
 

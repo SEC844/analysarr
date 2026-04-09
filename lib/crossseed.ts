@@ -6,21 +6,29 @@ const BASE_URL = buildServiceUrl(
   process.env.CROSSSEED_URL ?? '',
   process.env.CROSSSEED_PORT
 );
+// Cross Seed API key — generated with: cross-seed api-key
 const API_KEY = (process.env.CROSSSEED_API_KEY ?? '').trim();
 const TIMEOUT_MS = 5000;
 
 export const CROSSSEED_ENABLED = Boolean(BASE_URL);
+
+function authHeaders(): Record<string, string> {
+  if (!API_KEY) return {};
+  // Cross Seed v5+ accepts both Bearer token and apikey query param
+  return { Authorization: `Bearer ${API_KEY}` };
+}
 
 async function crossSeedFetch<T>(path: string): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   const url = new URL(`${BASE_URL}${path}`);
+  // Also pass as query param for compatibility with older versions
   if (API_KEY) url.searchParams.set('apikey', API_KEY);
 
   try {
     const res = await fetch(url.toString(), {
-      headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
+      headers: authHeaders(),
       signal: controller.signal,
       cache: 'no-store',
     });
@@ -44,6 +52,7 @@ export async function getCrossSeedTorrents(): Promise<CrossSeedTorrent[]> {
     );
     return Array.isArray(data) ? data : (data as { torrents: CrossSeedTorrent[] }).torrents ?? [];
   } catch {
+    // Cross Seed is optional — fail silently
     return [];
   }
 }
@@ -62,27 +71,37 @@ export async function getCrossSeedStatus(): Promise<ServiceStatus> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    // Try /api/torrents with auth first; fall back to root connectivity check.
+    // Cross Seed v5 uses Bearer token auth, older versions use apikey query param.
     const url = new URL(`${BASE_URL}/api/torrents`);
     if (API_KEY) url.searchParams.set('apikey', API_KEY);
 
     const res = await fetch(url.toString(), {
-      headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
+      headers: authHeaders(),
       signal: controller.signal,
       cache: 'no-store',
     });
     clearTimeout(timer);
 
-    // Any response from the server (even 401/403/404) means it's reachable.
-    // Only a network error or 5xx means truly down.
-    if (res.status >= 500) {
-      throw new Error(`Cross Seed server error: ${res.status}`);
+    if (res.ok) {
+      return { name: 'Cross Seed', url: BASE_URL, connected: true };
     }
 
+    if (res.status === 401 || res.status === 403) {
+      return {
+        name: 'Cross Seed',
+        url: BASE_URL,
+        connected: false,
+        error: `Auth failed (${res.status}) — check CROSSSEED_API_KEY (run: cross-seed api-key)`,
+      };
+    }
+
+    // 404 or other — server is reachable but endpoint unknown; still "connected"
     return {
       name: 'Cross Seed',
       url: BASE_URL,
       connected: true,
-      version: res.status === 200 ? 'OK' : `reachable (${res.status})`,
+      version: `reachable (HTTP ${res.status})`,
     };
   } catch (err) {
     return {

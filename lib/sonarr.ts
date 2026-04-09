@@ -39,12 +39,15 @@ export async function getSonarrEpisodes(seriesId: number): Promise<SonarrEpisode
 }
 
 export async function getSonarrStatus(): Promise<ServiceStatus> {
-  if (!BASE_URL || !API_KEY) {
+  if (!BASE_URL) {
+    return { name: 'Sonarr', url: '', connected: false, error: 'SONARR_URL not set' };
+  }
+  if (!API_KEY) {
     return {
       name: 'Sonarr',
       url: BASE_URL,
       connected: false,
-      error: 'URL or API key not configured',
+      error: 'SONARR_API_KEY is empty — check for a trailing space in the variable name on Unraid',
     };
   }
 
@@ -52,12 +55,11 @@ export async function getSonarrStatus(): Promise<ServiceStatus> {
     const data = await sonarrFetch<{ version: string }>('/system/status');
     return { name: 'Sonarr', url: BASE_URL, connected: true, version: data.version };
   } catch (err) {
-    return {
-      name: 'Sonarr',
-      url: BASE_URL,
-      connected: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
-    };
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    const hint = msg.includes('401')
+      ? `${msg} — wrong API key (check Sonarr → Settings → General)`
+      : msg;
+    return { name: 'Sonarr', url: BASE_URL, connected: false, error: hint };
   }
 }
 
