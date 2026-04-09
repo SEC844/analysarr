@@ -6,7 +6,7 @@ const BASE_URL = buildServiceUrl(
   process.env.RADARR_URL ?? '',
   process.env.RADARR_PORT
 );
-const API_KEY = process.env.RADARR_API_KEY ?? '';
+const API_KEY = (process.env.RADARR_API_KEY ?? '').trim();
 const TIMEOUT_MS = 5000;
 
 async function radarrFetch<T>(path: string): Promise<T> {

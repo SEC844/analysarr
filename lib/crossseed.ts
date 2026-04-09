@@ -6,7 +6,7 @@ const BASE_URL = buildServiceUrl(
   process.env.CROSSSEED_URL ?? '',
   process.env.CROSSSEED_PORT
 );
-const API_KEY = process.env.CROSSSEED_API_KEY ?? '';
+const API_KEY = (process.env.CROSSSEED_API_KEY ?? '').trim();
 const TIMEOUT_MS = 5000;
 
 export const CROSSSEED_ENABLED = Boolean(BASE_URL);
@@ -59,8 +59,31 @@ export async function getCrossSeedStatus(): Promise<ServiceStatus> {
   }
 
   try {
-    await crossSeedFetch<unknown>('/api/torrents');
-    return { name: 'Cross Seed', url: BASE_URL, connected: true };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    const url = new URL(`${BASE_URL}/api/torrents`);
+    if (API_KEY) url.searchParams.set('apikey', API_KEY);
+
+    const res = await fetch(url.toString(), {
+      headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(timer);
+
+    // Any response from the server (even 401/403/404) means it's reachable.
+    // Only a network error or 5xx means truly down.
+    if (res.status >= 500) {
+      throw new Error(`Cross Seed server error: ${res.status}`);
+    }
+
+    return {
+      name: 'Cross Seed',
+      url: BASE_URL,
+      connected: true,
+      version: res.status === 200 ? 'OK' : `reachable (${res.status})`,
+    };
   } catch (err) {
     return {
       name: 'Cross Seed',

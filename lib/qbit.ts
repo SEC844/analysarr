@@ -6,8 +6,8 @@ const BASE_URL = buildServiceUrl(
   process.env.QBIT_URL ?? '',
   process.env.QBIT_PORT
 );
-const USERNAME = process.env.QBIT_USERNAME ?? 'admin';
-const PASSWORD = process.env.QBIT_PASSWORD ?? '';
+const USERNAME = (process.env.QBIT_USERNAME ?? 'admin').trim();
+const PASSWORD = (process.env.QBIT_PASSWORD ?? '').trim();
 const TIMEOUT_MS = 5000;
 
 let _cookie: string | null = null;
@@ -81,21 +81,17 @@ export async function getQbitTorrents(): Promise<QbitTorrent[]> {
 
 export async function getQbitStatus(): Promise<ServiceStatus> {
   if (!BASE_URL) {
-    return {
-      name: 'qBittorrent',
-      url: BASE_URL,
-      connected: false,
-      error: 'URL not configured',
-    };
+    return { name: 'qBittorrent', url: BASE_URL, connected: false, error: 'URL not configured' };
   }
 
   try {
-    const data = await qbitFetch<{ version: string }>('/app/version');
+    // /app/buildInfo returns proper JSON (unlike /app/version which returns plain text)
+    const data = await qbitFetch<{ version: string }>('/app/buildInfo');
     return {
       name: 'qBittorrent',
       url: BASE_URL,
       connected: true,
-      version: typeof data === 'string' ? (data as unknown as string) : data.version,
+      version: data.version,
     };
   } catch (err) {
     _cookie = null;
