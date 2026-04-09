@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 COPY . .
 RUN npm run build
@@ -18,6 +18,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Standalone output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+
+# public/ may be empty — create it first to avoid COPY failure
+RUN mkdir -p ./public
 COPY --from=builder /app/public ./public
 
 EXPOSE 3000
