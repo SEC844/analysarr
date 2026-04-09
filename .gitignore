@@ -34,3 +34,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# project notes (not for repo)
+contexte.md
+
+# OS
+Thumbs.db

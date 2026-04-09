@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  analysarr:
+    image: ghcr.io/your-username/analysarr:latest
+    container_name: analysarr
+    ports:
+      - "3000:3000"
+    environment:
+      # ── Radarr ──────────────────────────────────────────────────────────────
+      - RADARR_URL=http://radarr         # hostname / IP only (no port needed here)
+      - RADARR_PORT=7878                 # optional — overrides port in RADARR_URL
+      - RADARR_API_KEY=your_radarr_api_key
+
+      # ── Sonarr ──────────────────────────────────────────────────────────────
+      - SONARR_URL=http://sonarr
+      - SONARR_PORT=8989                 # optional
+      - SONARR_API_KEY=your_sonarr_api_key
+
+      # ── qBittorrent ─────────────────────────────────────────────────────────
+      - QBIT_URL=http://qbittorrent
+      - QBIT_PORT=8080                   # optional
+      - QBIT_USERNAME=admin
+      - QBIT_PASSWORD=your_password
+
+      # ── Cross Seed (optional — remove block to disable) ─────────────────────
+      - CROSSSEED_URL=http://cross-seed
+      - CROSSSEED_PORT=2468              # optional, default 2468
+      - CROSSSEED_API_KEY=your_crossseed_api_key
+
+      # ── General ─────────────────────────────────────────────────────────────
+      # Auto-refresh interval in seconds (default: 60)
+      - REFRESH_INTERVAL=60
+
+      # Path mapping: translate qBittorrent paths to *arr paths
+      # Example: qBit sees /data/torrents, Radarr/Sonarr sees /media/torrents
+      - PATH_MAP_FROM=/data
+      - PATH_MAP_TO=/media
+
+    restart: unless-stopped
+    networks:
+      - media
+
+networks:
+  media:
+    external: true

@@ -1,101 +1,152 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useQuery } from '@tanstack/react-query';
+import {
+  Film,
+  Tv2,
+  Upload,
+  Link2,
+  Link2Off,
+  HardDrive,
+  AlertTriangle,
+  Shuffle,
+} from 'lucide-react';
+import { StatCard, StatCardSkeleton } from '@/components/StatCard';
+import { MediaCard, MediaCardSkeleton } from '@/components/MediaCard';
+import { formatBytes } from '@/lib/utils';
+import type { EnrichedMedia, DashboardStats } from '@/lib/types';
+
+const REFRESH_MS = parseInt(process.env.NEXT_PUBLIC_REFRESH_INTERVAL ?? '60', 10) * 1000;
+
+interface DashboardData {
+  media: EnrichedMedia[];
+  stats: DashboardStats;
+  errors: { radarr: string | null; sonarr: string | null; qbit: string | null };
+}
+
+export default function DashboardPage() {
+  const { data, isLoading, isError, error } = useQuery<DashboardData>({
+    queryKey: ['dashboard'],
+    queryFn: () => fetch('/api/dashboard').then((r) => r.json()),
+    refetchInterval: REFRESH_MS,
+  });
+
+  const stats = data?.stats;
+  const media = data?.media ?? [];
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <div className="space-y-8 animate-fade-in">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+        <p className="mt-1 text-sm text-zinc-400">
+          Real-time overview of your media stack
+        </p>
+      </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      {/* Service errors */}
+      {data?.errors && Object.entries(data.errors).some(([, v]) => v) && (
+        <div className="rounded-xl border border-amber-800 bg-amber-950/40 p-4 text-sm text-amber-300">
+          <p className="font-medium mb-1">Some services are unavailable:</p>
+          <ul className="list-disc list-inside space-y-0.5 text-amber-400/80">
+            {data.errors.radarr && <li>Radarr: {data.errors.radarr}</li>}
+            {data.errors.sonarr && <li>Sonarr: {data.errors.sonarr}</li>}
+            {data.errors.qbit && <li>qBittorrent: {data.errors.qbit}</li>}
+          </ul>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
+      )}
+
+      {/* Global fetch error */}
+      {isError && (
+        <div className="rounded-xl border border-red-800 bg-red-950/40 p-4 text-sm text-red-300">
+          Failed to load dashboard: {(error as Error)?.message ?? 'Unknown error'}.{' '}
+          <a href="/settings" className="underline">Check your settings.</a>
+        </div>
+      )}
+
+      {/* Stat cards */}
+      <section>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
+          {isLoading ? (
+            Array.from({ length: 8 }).map((_, i) => <StatCardSkeleton key={i} />)
+          ) : (
+            <>
+              <StatCard label="Movies" value={stats?.totalMovies ?? 0} icon={Film} color="blue" />
+              <StatCard label="Series" value={stats?.totalSeries ?? 0} icon={Tv2} color="purple" />
+              <StatCard label="Episodes" value={stats?.totalEpisodes ?? 0} icon={Tv2} color="purple" />
+              <StatCard label="Seeding" value={stats?.seedingCount ?? 0} icon={Upload} color="green" />
+              <StatCard label="Hardlinked" value={stats?.hardlinkedCount ?? 0} icon={Link2} color="green" />
+              <StatCard
+                label="Missing links"
+                value={stats?.missingHardlinks ?? 0}
+                icon={Link2Off}
+                color={stats?.missingHardlinks ? 'red' : 'zinc'}
+              />
+              <StatCard
+                label="Cross Seeds"
+                value={stats?.crossSeedCount ?? 0}
+                icon={Shuffle}
+                color={(stats?.crossSeedCount ?? 0) > 0 ? 'blue' : 'zinc'}
+              />
+              <StatCard
+                label="Seeding size"
+                value={formatBytes(stats?.totalSeedingSize ?? 0)}
+                icon={HardDrive}
+                color="zinc"
+              />
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* Issues banner */}
+      {stats && stats.issueCount > 0 && (
         <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          href="/issues"
+          className="flex items-center gap-2 rounded-xl border border-amber-800 bg-amber-950/30 px-4 py-3 text-sm text-amber-300 transition-colors hover:bg-amber-950/50"
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            {stats.issueCount} issue{stats.issueCount !== 1 ? 's' : ''} detected — click to view
+          </span>
         </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )}
+
+      {/* Media grid */}
+      <section>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Library</h2>
+          {media.length > 0 && (
+            <span className="text-sm text-zinc-500">{media.length} items</span>
+          )}
+        </div>
+
+        {isLoading ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {Array.from({ length: 18 }).map((_, i) => (
+              <MediaCardSkeleton key={i} />
+            ))}
+          </div>
+        ) : media.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 py-16 text-center">
+            <Film className="mx-auto mb-3 h-10 w-10 text-zinc-600" />
+            <p className="text-zinc-400">No media found</p>
+            <p className="mt-1 text-sm text-zinc-600">Check your Radarr/Sonarr settings</p>
+            <a
+              href="/settings"
+              className="mt-4 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors"
+            >
+              Go to Settings
+            </a>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {media.map((m) => (
+              <MediaCard key={`${m.type}-${m.id}`} media={m} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
