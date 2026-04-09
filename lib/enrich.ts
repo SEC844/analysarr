@@ -11,15 +11,15 @@ import type {
 } from './types';
 
 const PATH_MAP_FROM = process.env.PATH_MAP_FROM ?? '';
-const PATH_MAP_TO = process.env.PATH_MAP_TO ?? '';
+const PATH_MAP_TO   = process.env.PATH_MAP_TO   ?? '';
 
-const SEEDING_STATES = new Set(['uploading', 'stalledUP', 'checkingUP', 'queuedUP', 'forcedUP']);
-
-/** Cross Seed statuses that mean the torrent is actively seeding as a cross-seed */
-const CROSSSEED_ACTIVE_STATUSES = new Set<CrossSeedTorrent['status']>([
-  'SAVED',
-  'INJECTED',
+export const SEEDING_STATES = new Set([
+  'uploading', 'stalledUP', 'checkingUP', 'queuedUP', 'forcedUP',
 ]);
+
+const CROSSSEED_ACTIVE = new Set<CrossSeedTorrent['status']>(['SAVED', 'INJECTED']);
+
+// ── Path helpers ──────────────────────────────────────────────────────────────
 
 function mapPath(p: string): string {
   if (PATH_MAP_FROM && PATH_MAP_TO && p.startsWith(PATH_MAP_FROM)) {
@@ -28,149 +28,195 @@ function mapPath(p: string): string {
   return p;
 }
 
+function norm(p: string | undefined): string {
+  return (p ?? '').replace(/\\/g, '/');
+}
+
+function pathsOverlap(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+// ── Name-based fuzzy matching ─────────────────────────────────────────────────
+// Strips quality tags, groups, season info, etc. to get a bare title for comparison.
+
+const QUALITY_RE = new RegExp(
+  [
+    // Languages
+    'multi', 'vff', 'vf', 'vo', 'vostfr', 'truefrench', 'french', 'english', 'dubbed', 'subbed',
+    // Source
+    'bluray', 'blu-ray', 'webrip', 'web-dl', 'web', 'hdtv', 'hdrip', 'bdrip', 'dvdrip',
+    '4klight', '4k', 'uhd', 'remux',
+    // HDR / Color
+    'hdr10plus', 'hdr10', 'hdr', 'sdr', 'dolby\\.vision', 'dolby', 'vision', 'atmos', 'dv',
+    // Resolution
+    '2160p', '1080p', '720p', '480p', '576p',
+    // Codec
+    'x264', 'x265', 'h\\.264', 'h\\.265', 'h264', 'h265', 'avc', 'hevc', 'av1',
+    '10bit', '8bit', 'hi10p',
+    // Audio
+    'truehd', 'eac3', 'ddp', 'dd5', 'dts', 'flac', 'opus', 'aac', 'ac3',
+    '5\\.1', '7\\.1', '2\\.0',
+    // Edition
+    'proper', 'repack', 'extended', 'theatrical', 'unrated', 'directors', 'edition', 'cut',
+    // French season words
+    'saison', 'partie',
+  ].map(t => `\\b${t}\\b`).join('|'),
+  'gi'
+);
+
+function normalizeName(s: string): string {
+  return s
+    .toLowerCase()
+    // Remove year
+    .replace(/\b(19|20)\d{2}\b/g, '')
+    // Remove SxxExx or season/episode numbers
+    .replace(/\bs\d{1,2}(e\d{1,3}(-e?\d{1,3})?)?\b/gi, '')
+    .replace(/\bseason\s*\d+\b/gi, '')
+    .replace(/\bepisode\s*\d+\b/gi, '')
+    .replace(/\b(saison|partie)\s*\d+\b/gi, '')
+    // Remove quality/group tags
+    .replace(QUALITY_RE, '')
+    // Remove release group suffix (e.g. "-QTZ", "-Elo")
+    .replace(/-[a-z0-9]{2,10}$/i, '')
+    // Remove file extension
+    .replace(/\.[a-z0-9]{2,4}$/i, '')
+    // Normalize separators
+    .replace(/[._\-\[\](){}+]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Returns a [0-100] match score between a torrent name and a media title. */
+function matchScore(torrentName: string, mediaTitle: string): number {
+  const nt = normalizeName(torrentName);
+  const nm = normalizeName(mediaTitle);
+  if (!nt || !nm || nm.length < 2) return 0;
+  if (nt === nm) return 100;
+  // Title must be at least 3 chars and fully contained in the normalized torrent name
+  if (nm.length >= 3 && nt.includes(nm)) return 85;
+  // Torrent name fully contained in title (short torrents)
+  if (nt.length >= 3 && nm.includes(nt)) return 70;
+  return 0;
+}
+
 function seedingStatus(torrents: QbitTorrent[]): SeedingStatus {
   if (torrents.length === 0) return 'not_seeding';
-  return torrents.some((t) => SEEDING_STATES.has(t.state)) ? 'seeding' : 'not_seeding';
+  return torrents.some(t => SEEDING_STATES.has(t.state)) ? 'seeding' : 'not_seeding';
 }
 
 function hardlinkStatus(filePaths: string[], torrents: QbitTorrent[]): HardlinkStatus {
   if (filePaths.length === 0 || torrents.length === 0) return 'unknown';
-  const torrentPaths = torrents.map((t) => mapPath(t.content_path ?? t.save_path));
-  const matched = filePaths.some((fp) =>
-    torrentPaths.some((tp) => fp.startsWith(tp) || tp.startsWith(fp))
-  );
+  const torrentPaths = torrents.map(t => norm(mapPath(t.content_path ?? t.save_path)));
+  const matched = filePaths.some(fp => torrentPaths.some(tp => pathsOverlap(fp, tp)));
   return matched ? 'hardlinked' : 'not_hardlinked';
 }
 
-function normalizePath(p: string | undefined): string {
-  return (p ?? '').replace(/\\/g, '/');
-}
+// ── Main enrichment ───────────────────────────────────────────────────────────
 
 export function enrichMedia(
   movies: RadarrMovie[],
   series: SonarrSeries[],
   torrents: QbitTorrent[],
-  crossSeedTorrents: CrossSeedTorrent[] = []
+  crossSeedTorrents: CrossSeedTorrent[] = [],
 ): { media: EnrichedMedia[]; issues: IssueItem[]; stats: DashboardStats } {
   const issues: IssueItem[] = [];
   const enriched: EnrichedMedia[] = [];
   const matchedHashes = new Set<string>();
 
-  // Build a set of hashes that are cross-seeds so we can exclude them from orphan detection
   const crossSeedHashes = new Set(
     crossSeedTorrents
-      .filter((cs) => CROSSSEED_ACTIVE_STATUSES.has(cs.status))
-      .map((cs) => cs.infoHash.toLowerCase())
+      .filter(cs => CROSSSEED_ACTIVE.has(cs.status))
+      .map(cs => cs.infoHash.toLowerCase()),
   );
 
-  // ── Movies ────────────────────────────────────────────────────────────────
+  // ── Movies ─────────────────────────────────────────────────────────────────
   for (const movie of movies) {
-    const filePath = movie.movieFile?.path ? normalizePath(movie.movieFile.path) : null;
-    const filePaths = filePath ? [filePath] : [];
+    const filePath = movie.movieFile?.path ? norm(movie.movieFile.path) : null;
+    const mappedFilePath = filePath ? norm(mapPath(filePath)) : null;
+    const filePaths = mappedFilePath ? [mappedFilePath] : [];
 
-    const matchedTorrents = torrents.filter((t) => {
-      const tp = normalizePath(mapPath(t.content_path ?? t.save_path));
-      return filePaths.some((fp) => fp.startsWith(tp) || tp.startsWith(fp));
+    // Match by path first, then by name
+    const matchedTorrents = torrents.filter(t => {
+      const tp = norm(mapPath(t.content_path ?? t.save_path ?? ''));
+      if (filePaths.some(fp => pathsOverlap(fp, tp))) return true;
+      return matchScore(t.name, movie.title) > 0;
     });
 
-    matchedTorrents.forEach((t) => matchedHashes.add(t.hash));
+    matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
-    const seeding = seedingStatus(matchedTorrents);
-    const hardlink = hardlinkStatus(filePaths, matchedTorrents);
+    const seeding   = seedingStatus(matchedTorrents);
+    const hardlink  = hardlinkStatus(filePaths, matchedTorrents);
+    const csCount   = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
+    const posterImg = movie.images.find(i => i.coverType === 'poster');
 
-    const posterImage = movie.images.find((i) => i.coverType === 'poster');
-
-    // Count cross-seeds linked to this movie's torrents
-    const crossSeedCount = matchedTorrents.filter((t) =>
-      crossSeedHashes.has(t.hash.toLowerCase())
-    ).length;
-
-    // Issues
     if (filePath && matchedTorrents.length === 0) {
       issues.push({
-        id: `no-torrent-movie-${movie.id}`,
-        type: 'no_torrent',
+        id: `no-torrent-movie-${movie.id}`, type: 'no_torrent',
         title: movie.title,
         description: 'Movie file found but no matching torrent in qBittorrent.',
         mediaType: 'movie',
       });
     }
-
     if (matchedTorrents.length > 1) {
       issues.push({
-        id: `dup-movie-${movie.id}`,
-        type: 'duplicate',
+        id: `dup-movie-${movie.id}`, type: 'duplicate',
         title: movie.title,
         description: `${matchedTorrents.length} torrents matched to the same movie.`,
         mediaType: 'movie',
       });
     }
-
-    if (hardlink === 'not_hardlinked' && filePaths.length > 0) {
+    if (hardlink === 'not_hardlinked' && filePaths.length > 0 && matchedTorrents.length > 0) {
       issues.push({
-        id: `copy-movie-${movie.id}`,
-        type: 'copy_not_hardlink',
+        id: `copy-movie-${movie.id}`, type: 'copy_not_hardlink',
         title: movie.title,
-        description: 'File present but path does not match any torrent — likely a copy, not a hardlink.',
+        description: 'Torrent matched but file paths differ — may be a copy instead of a hardlink.',
         mediaType: 'movie',
       });
     }
 
     enriched.push({
-      id: movie.id,
-      type: 'movie',
-      title: movie.title,
-      year: movie.year,
-      posterUrl: posterImage ? `/api/poster/radarr/${movie.id}` : null,
-      seedingStatus: seeding,
-      hardlinkStatus: hardlink,
-      torrents: matchedTorrents,
-      filePaths,
+      id: movie.id, type: 'movie',
+      title: movie.title, year: movie.year,
+      posterUrl: posterImg ? `/api/poster/radarr/${movie.id}` : null,
+      seedingStatus: seeding, hardlinkStatus: hardlink,
+      torrents: matchedTorrents, filePaths,
       hasDuplicates: matchedTorrents.length > 1,
-      crossSeedCount,
+      crossSeedCount: csCount,
       size: movie.movieFile?.size ?? 0,
     });
   }
 
-  // ── Series ────────────────────────────────────────────────────────────────
+  // ── Series ─────────────────────────────────────────────────────────────────
   for (const show of series) {
-    const showPath = normalizePath(show.path);
+    const showPath = norm(mapPath(show.path ?? ''));
+    const filePaths = showPath ? [showPath] : [];
 
-    const matchedTorrents = torrents.filter((t) => {
-      const tp = normalizePath(mapPath(t.content_path ?? t.save_path));
-      return tp.startsWith(showPath) || showPath.startsWith(tp);
+    const matchedTorrents = torrents.filter(t => {
+      const tp = norm(mapPath(t.content_path ?? t.save_path ?? ''));
+      if (showPath && pathsOverlap(showPath, tp)) return true;
+      return matchScore(t.name, show.title) > 0;
     });
 
-    matchedTorrents.forEach((t) => matchedHashes.add(t.hash));
+    matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
-    const seeding = seedingStatus(matchedTorrents);
-    const filePaths = showPath ? [showPath] : [];
+    const seeding  = seedingStatus(matchedTorrents);
     const hardlink = hardlinkStatus(filePaths, matchedTorrents);
-
-    const episodeSeedingCount = matchedTorrents.filter((t) =>
-      SEEDING_STATES.has(t.state)
-    ).length;
-
-    const posterImage = show.images.find((i) => i.coverType === 'poster');
-
-    const crossSeedCount = matchedTorrents.filter((t) =>
-      crossSeedHashes.has(t.hash.toLowerCase())
-    ).length;
+    const csCount  = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
+    const epSeeding = matchedTorrents.filter(t => SEEDING_STATES.has(t.state)).length;
+    const posterImg = show.images.find(i => i.coverType === 'poster');
 
     if (show.statistics.episodeFileCount > 0 && matchedTorrents.length === 0) {
       issues.push({
-        id: `no-torrent-series-${show.id}`,
-        type: 'no_torrent',
+        id: `no-torrent-series-${show.id}`, type: 'no_torrent',
         title: show.title,
         description: `Series has ${show.statistics.episodeFileCount} episode files but no matching torrent.`,
         mediaType: 'series',
       });
     }
-
     if (matchedTorrents.length > 1) {
       issues.push({
-        id: `dup-series-${show.id}`,
-        type: 'duplicate',
+        id: `dup-series-${show.id}`, type: 'duplicate',
         title: show.title,
         description: `${matchedTorrents.length} torrents matched to the same series.`,
         mediaType: 'series',
@@ -178,67 +224,53 @@ export function enrichMedia(
     }
 
     enriched.push({
-      id: show.id,
-      type: 'series',
-      title: show.title,
-      year: show.year,
-      posterUrl: posterImage ? `/api/poster/sonarr/${show.id}` : null,
-      seedingStatus: seeding,
-      hardlinkStatus: hardlink,
-      torrents: matchedTorrents,
-      filePaths,
-      episodeSeedingCount,
+      id: show.id, type: 'series',
+      title: show.title, year: show.year,
+      posterUrl: posterImg ? `/api/poster/sonarr/${show.id}` : null,
+      seedingStatus: seeding, hardlinkStatus: hardlink,
+      torrents: matchedTorrents, filePaths,
+      episodeSeedingCount: epSeeding,
       hasDuplicates: matchedTorrents.length > 1,
-      crossSeedCount,
+      crossSeedCount: csCount,
       size: show.statistics.sizeOnDisk ?? 0,
     });
   }
 
-  // ── Orphan torrents ───────────────────────────────────────────────────────
-  // Exclude cross-seeds from orphan detection — they legitimately exist
-  // outside of *arr but are not real orphans.
+  // ── Orphan torrents ─────────────────────────────────────────────────────────
   for (const t of torrents) {
     if (!matchedHashes.has(t.hash) && !crossSeedHashes.has(t.hash.toLowerCase())) {
       issues.push({
-        id: `orphan-${t.hash}`,
-        type: 'orphan_torrent',
+        id: `orphan-${t.hash}`, type: 'orphan_torrent',
         title: t.name,
-        description: 'Torrent exists in qBittorrent but is not linked to any Radarr/Sonarr entry.',
+        description: 'Torrent not linked to any Radarr/Sonarr entry.',
         torrentHash: t.hash,
       });
     }
   }
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
-  const seedingMedia = enriched.filter((m) => m.seedingStatus === 'seeding');
-  const hardlinkedMedia = enriched.filter((m) => m.hardlinkStatus === 'hardlinked');
-  const missingHardlinks = enriched.filter(
-    (m) => m.filePaths.length > 0 && m.hardlinkStatus === 'not_hardlinked'
-  );
+  // ── Stats ───────────────────────────────────────────────────────────────────
+  // Seeding count = all qBit torrents in seeding state (not just matched ones)
+  const seedingTorrents     = torrents.filter(t => SEEDING_STATES.has(t.state));
+  const totalSeedingSize    = seedingTorrents.reduce((a, t) => a + t.size, 0);
 
-  const seedingTorrents = torrents.filter((t) => SEEDING_STATES.has(t.state));
-  const totalSeedingSize = seedingTorrents.reduce((acc, t) => acc + t.size, 0);
+  const hardlinkedCount  = enriched.filter(m => m.hardlinkStatus === 'hardlinked').length;
+  const missingHardlinks = enriched.filter(m => m.filePaths.length > 0 && m.hardlinkStatus === 'not_hardlinked').length;
+  const totalEpisodes    = series.reduce((a, s) => a + (s.statistics?.episodeCount ?? 0), 0);
+  const totalCrossSeeds  = crossSeedTorrents.filter(cs => CROSSSEED_ACTIVE.has(cs.status)).length;
 
-  const totalEpisodes = series.reduce(
-    (acc, s) => acc + (s.statistics?.episodeCount ?? 0),
-    0
-  );
-
-  const totalCrossSeedCount = crossSeedTorrents.filter((cs) =>
-    CROSSSEED_ACTIVE_STATUSES.has(cs.status)
-  ).length;
-
-  const stats: DashboardStats = {
-    totalMovies: movies.length,
-    totalSeries: series.length,
-    totalEpisodes,
-    seedingCount: seedingMedia.length,
-    hardlinkedCount: hardlinkedMedia.length,
-    missingHardlinks: missingHardlinks.length,
-    totalSeedingSize,
-    issueCount: issues.length,
-    crossSeedCount: totalCrossSeedCount,
+  return {
+    media: enriched,
+    issues,
+    stats: {
+      totalMovies: movies.length,
+      totalSeries: series.length,
+      totalEpisodes,
+      seedingCount: seedingTorrents.length,   // ← direct from qBit
+      hardlinkedCount,
+      missingHardlinks,
+      totalSeedingSize,
+      issueCount: issues.length,
+      crossSeedCount: totalCrossSeeds,
+    },
   };
-
-  return { media: enriched, issues, stats };
 }
