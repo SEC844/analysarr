@@ -95,8 +95,12 @@ function checkInodes(rawArrPaths: string[], torrents: QbitTorrent[]): boolean | 
   for (const arrPath of rawArrPaths) {
     if (!arrPath) continue;
 
+    // Translate arr path to a container-accessible path via PATH_MAP
+    // e.g. /mnt/user/Data/media/tv/Show → /media/tv/Show
+    const arrResolved = norm(mapPath(arrPath));
+
     let arrStat = null;
-    try { arrStat = statSync(arrPath); anyAccessible = true; } catch { continue; }
+    try { arrStat = statSync(arrResolved); anyAccessible = true; } catch { continue; }
 
     if (arrStat.isFile()) {
       // ── Movie / single-file case: *arr reported a specific file ───────────
@@ -116,7 +120,7 @@ function checkInodes(rawArrPaths: string[], torrents: QbitTorrent[]): boolean | 
     } else if (arrStat.isDirectory()) {
       // ── Series case: *arr reported the series root directory ──────────────
       // Collect a sample of file inodes from the *arr directory
-      const arrInodes = collectInodes(arrPath, 20);
+      const arrInodes = collectInodes(arrResolved, 20);
       if (arrInodes.size === 0) continue;
 
       for (const t of torrents) {
