@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   analysarr:
-    image: ghcr.io/your-username/analysarr:latest
+    image: ghcr.io/SEC844/analysarr:latest
     container_name: analysarr
     ports:
       - "3000:3000"
@@ -32,10 +32,23 @@ services:
       # Auto-refresh interval in seconds (default: 60)
       - REFRESH_INTERVAL=60
 
-      # Path mapping: translate qBittorrent paths to *arr paths
+      # Path mapping (fallback) — only needed if inode detection is disabled.
+      # Translates qBittorrent paths to *arr paths for path-based comparison.
       # Example: qBit sees /data/torrents, Radarr/Sonarr sees /media/torrents
       - PATH_MAP_FROM=/data
       - PATH_MAP_TO=/media
+
+    # ── Volume mounts for inode-based hardlink detection ──────────────────────
+    # Mount the same directories that qBittorrent and Radarr/Sonarr use.
+    # Analysarr compares inode numbers to reliably detect hardlinks.
+    #
+    # Adapt the host paths (/mnt/user/...) to match your Unraid share layout:
+    volumes:
+      - /mnt/user/data:/data:ro        # qBittorrent download root
+      - /mnt/user/media:/media:ro      # Radarr / Sonarr media root
+      # If both torrents and media live under the same share (e.g. /mnt/user/data),
+      # a single mount is enough:
+      # - /mnt/user/data:/data:ro
 
     restart: unless-stopped
     networks:

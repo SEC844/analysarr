@@ -1,3 +1,5 @@
+import { statSync, readdirSync } from 'fs';
+import { join as joinPath } from 'path';
 import type {
   RadarrMovie,
   SonarrSeries,
@@ -37,8 +39,118 @@ function pathsOverlap(a: string, b: string): boolean {
   return a.startsWith(b) || b.startsWith(a);
 }
 
+// ── Inode helpers (server-side only) ─────────────────────────────────────────
+
+/** Safely stat a path and return its inode, or null if inaccessible. */
+function safeIno(p: string): number | null {
+  if (!p) return null;
+  try {
+    const s = statSync(p);
+    return s.ino > 0 ? s.ino : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Collect inodes of files inside a directory (up to 2 levels deep, max maxFiles).
+ * Used to compare multi-file torrents (season packs, movie folders).
+ */
+function collectInodes(dir: string, maxFiles = 20): Set<number> {
+  const result = new Set<number>();
+  function walk(d: string, depth: number) {
+    if (depth > 2 || result.size >= maxFiles) return;
+    try {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        if (result.size >= maxFiles) break;
+        const full = joinPath(d, entry.name);
+        if (entry.isFile()) {
+          const ino = safeIno(full);
+          if (ino !== null) result.add(ino);
+        } else if (entry.isDirectory()) {
+          walk(full, depth + 1);
+        }
+      }
+    } catch { /* directory not mounted / accessible */ }
+  }
+  walk(dir, 0);
+  return result;
+}
+
+/**
+ * Compare inodes between arr file/directory paths and qBit torrent paths.
+ *
+ * Returns:
+ *   true  — hardlink confirmed (identical inode found)
+ *   false — paths accessible but no matching inode (not hardlinked)
+ *   null  — filesystem not mounted; caller should fall back to path comparison
+ */
+function checkInodes(rawArrPaths: string[], torrents: QbitTorrent[]): boolean | null {
+  let anyAccessible = false;
+
+  for (const arrPath of rawArrPaths) {
+    if (!arrPath) continue;
+
+    const arrIno = safeIno(arrPath);
+
+    if (arrIno !== null) {
+      // arrPath is a regular file — compare inode directly with each torrent path
+      anyAccessible = true;
+      for (const t of torrents) {
+        const qp = norm(t.content_path ?? t.save_path ?? '');
+        if (!qp) continue;
+
+        const qIno = safeIno(qp);
+        if (qIno !== null) {
+          anyAccessible = true;
+          if (qIno === arrIno) return true;
+        } else {
+          // qBit path might be a directory (multi-file torrent) — scan its files
+          try {
+            if (statSync(qp).isDirectory()) {
+              anyAccessible = true;
+              if (collectInodes(qp, 50).has(arrIno)) return true;
+            }
+          } catch { /* not accessible */ }
+        }
+      }
+    } else {
+      // arrPath might be a directory (series: Sonarr series root)
+      try {
+        if (statSync(arrPath).isDirectory()) {
+          anyAccessible = true;
+          const arrInodes = collectInodes(arrPath, 5);
+          if (arrInodes.size > 0) {
+            for (const t of torrents) {
+              const qp = norm(t.content_path ?? t.save_path ?? '');
+              if (!qp) continue;
+
+              const qIno = safeIno(qp);
+              if (qIno !== null) {
+                anyAccessible = true;
+                if (arrInodes.has(qIno)) return true;
+              } else {
+                try {
+                  if (statSync(qp).isDirectory()) {
+                    anyAccessible = true;
+                    const qInodes = collectInodes(qp, 5);
+                    for (const ino of qInodes) {
+                      if (arrInodes.has(ino)) return true;
+                    }
+                  }
+                } catch { /* not accessible */ }
+              }
+            }
+          }
+        }
+      } catch { /* not accessible */ }
+    }
+  }
+
+  return anyAccessible ? false : null;
+}
+
 // ── Name-based fuzzy matching ─────────────────────────────────────────────────
-// Strips quality tags, groups, season info, etc. to get a bare title for comparison.
 
 const QUALITY_RE = new RegExp(
   [
@@ -68,34 +180,25 @@ const QUALITY_RE = new RegExp(
 function normalizeName(s: string): string {
   return s
     .toLowerCase()
-    // Remove year
     .replace(/\b(19|20)\d{2}\b/g, '')
-    // Remove SxxExx or season/episode numbers
     .replace(/\bs\d{1,2}(e\d{1,3}(-e?\d{1,3})?)?\b/gi, '')
     .replace(/\bseason\s*\d+\b/gi, '')
     .replace(/\bepisode\s*\d+\b/gi, '')
     .replace(/\b(saison|partie)\s*\d+\b/gi, '')
-    // Remove quality/group tags
     .replace(QUALITY_RE, '')
-    // Remove release group suffix (e.g. "-QTZ", "-Elo")
     .replace(/-[a-z0-9]{2,10}$/i, '')
-    // Remove file extension
     .replace(/\.[a-z0-9]{2,4}$/i, '')
-    // Normalize separators
     .replace(/[._\-\[\](){}+]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-/** Returns a [0-100] match score between a torrent name and a media title. */
 function matchScore(torrentName: string, mediaTitle: string): number {
   const nt = normalizeName(torrentName);
   const nm = normalizeName(mediaTitle);
   if (!nt || !nm || nm.length < 2) return 0;
   if (nt === nm) return 100;
-  // Title must be at least 3 chars and fully contained in the normalized torrent name
   if (nm.length >= 3 && nt.includes(nm)) return 85;
-  // Torrent name fully contained in title (short torrents)
   if (nt.length >= 3 && nm.includes(nt)) return 70;
   return 0;
 }
@@ -105,10 +208,29 @@ function seedingStatus(torrents: QbitTorrent[]): SeedingStatus {
   return torrents.some(t => SEEDING_STATES.has(t.state)) ? 'seeding' : 'not_seeding';
 }
 
-function hardlinkStatus(filePaths: string[], torrents: QbitTorrent[]): HardlinkStatus {
-  if (filePaths.length === 0 || torrents.length === 0) return 'unknown';
-  const torrentPaths = torrents.map(t => norm(mapPath(t.content_path ?? t.save_path)));
-  const matched = filePaths.some(fp => torrentPaths.some(tp => pathsOverlap(fp, tp)));
+/**
+ * Determine hardlink status for a media entry.
+ *
+ * 1. Tries inode comparison using rawArrPaths (requires filesystem to be mounted).
+ * 2. Falls back to path-overlap comparison using mappedArrPaths.
+ */
+function hardlinkStatus(
+  rawArrPaths: string[],    // unmapped paths as reported by Radarr/Sonarr — for inode check
+  mappedArrPaths: string[], // path-mapped paths — for fallback overlap check
+  torrents: QbitTorrent[],
+): HardlinkStatus {
+  if ((rawArrPaths.length === 0 && mappedArrPaths.length === 0) || torrents.length === 0) {
+    return 'unknown';
+  }
+
+  // 1. Inode-based comparison (preferred — reliable on any path layout)
+  const inodeResult = checkInodes(rawArrPaths, torrents);
+  if (inodeResult === true)  return 'hardlinked';
+  if (inodeResult === false) return 'not_hardlinked';
+
+  // 2. Path-overlap fallback (when filesystem is not mounted inside the container)
+  const torrentPaths = torrents.map(t => norm(mapPath(t.content_path ?? t.save_path ?? '')));
+  const matched = mappedArrPaths.some(fp => torrentPaths.some(tp => pathsOverlap(fp, tp)));
   return matched ? 'hardlinked' : 'not_hardlinked';
 }
 
@@ -130,10 +252,18 @@ export function enrichMedia(
       .map(cs => cs.infoHash.toLowerCase()),
   );
 
+  // Only process media that has at least one file — skip "wanted but not downloaded" entries
+  const downloadedMovies = movies.filter(m => m.hasFile);
+  const downloadedSeries = series.filter(s => (s.statistics?.episodeFileCount ?? 0) > 0);
+
   // ── Movies ─────────────────────────────────────────────────────────────────
-  for (const movie of movies) {
-    const filePath = movie.movieFile?.path ? norm(movie.movieFile.path) : null;
-    const mappedFilePath = filePath ? norm(mapPath(filePath)) : null;
+  for (const movie of downloadedMovies) {
+    // Raw path (as Radarr reports it) — used for inode comparison
+    const rawFilePath = movie.movieFile?.path ? norm(movie.movieFile.path) : null;
+    const rawFilePaths = rawFilePath ? [rawFilePath] : [];
+
+    // Mapped path — used for path-overlap fallback and display
+    const mappedFilePath = rawFilePath ? norm(mapPath(rawFilePath)) : null;
     const filePaths = mappedFilePath ? [mappedFilePath] : [];
 
     // Match by path first, then by name
@@ -145,12 +275,12 @@ export function enrichMedia(
 
     matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
-    const seeding   = seedingStatus(matchedTorrents);
-    const hardlink  = hardlinkStatus(filePaths, matchedTorrents);
-    const csCount   = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
+    const seeding  = seedingStatus(matchedTorrents);
+    const hardlink = hardlinkStatus(rawFilePaths, filePaths, matchedTorrents);
+    const csCount  = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
     const posterImg = movie.images.find(i => i.coverType === 'poster');
 
-    if (filePath && matchedTorrents.length === 0) {
+    if (rawFilePath && matchedTorrents.length === 0) {
       issues.push({
         id: `no-torrent-movie-${movie.id}`, type: 'no_torrent',
         title: movie.title,
@@ -188,20 +318,25 @@ export function enrichMedia(
   }
 
   // ── Series ─────────────────────────────────────────────────────────────────
-  for (const show of series) {
-    const showPath = norm(mapPath(show.path ?? ''));
-    const filePaths = showPath ? [showPath] : [];
+  for (const show of downloadedSeries) {
+    // Raw path (as Sonarr reports it) — used for inode comparison
+    const rawShowPath = norm(show.path ?? '');
+    const rawFilePaths = rawShowPath ? [rawShowPath] : [];
+
+    // Mapped path — used for path-overlap fallback and display
+    const mappedShowPath = rawShowPath ? norm(mapPath(rawShowPath)) : '';
+    const filePaths = mappedShowPath ? [mappedShowPath] : [];
 
     const matchedTorrents = torrents.filter(t => {
       const tp = norm(mapPath(t.content_path ?? t.save_path ?? ''));
-      if (showPath && pathsOverlap(showPath, tp)) return true;
+      if (mappedShowPath && pathsOverlap(mappedShowPath, tp)) return true;
       return matchScore(t.name, show.title) > 0;
     });
 
     matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
     const seeding  = seedingStatus(matchedTorrents);
-    const hardlink = hardlinkStatus(filePaths, matchedTorrents);
+    const hardlink = hardlinkStatus(rawFilePaths, filePaths, matchedTorrents);
     const csCount  = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
     const epSeeding = matchedTorrents.filter(t => SEEDING_STATES.has(t.state)).length;
     const posterImg = show.images.find(i => i.coverType === 'poster');
@@ -249,27 +384,26 @@ export function enrichMedia(
   }
 
   // ── Stats ───────────────────────────────────────────────────────────────────
-  // Seeding count = all qBit torrents in seeding state (not just matched ones)
-  const seedingTorrents     = torrents.filter(t => SEEDING_STATES.has(t.state));
-  const totalSeedingSize    = seedingTorrents.reduce((a, t) => a + t.size, 0);
+  const seedingTorrents  = torrents.filter(t => SEEDING_STATES.has(t.state));
+  const totalSeedingSize = seedingTorrents.reduce((a, t) => a + t.size, 0);
 
   const hardlinkedCount  = enriched.filter(m => m.hardlinkStatus === 'hardlinked').length;
   const missingHardlinks = enriched.filter(m => m.filePaths.length > 0 && m.hardlinkStatus === 'not_hardlinked').length;
-  const totalEpisodes    = series.reduce((a, s) => a + (s.statistics?.episodeCount ?? 0), 0);
+  const totalEpisodes    = downloadedSeries.reduce((a, s) => a + (s.statistics?.episodeFileCount ?? 0), 0);
   const totalCrossSeeds  = crossSeedTorrents.filter(cs => CROSSSEED_ACTIVE.has(cs.status)).length;
 
   return {
     media: enriched,
     issues,
     stats: {
-      totalMovies: movies.length,
-      totalSeries: series.length,
+      totalMovies:    downloadedMovies.length,
+      totalSeries:    downloadedSeries.length,
       totalEpisodes,
-      seedingCount: seedingTorrents.length,   // ← direct from qBit
+      seedingCount:   seedingTorrents.length,
       hardlinkedCount,
       missingHardlinks,
       totalSeedingSize,
-      issueCount: issues.length,
+      issueCount:     issues.length,
       crossSeedCount: totalCrossSeeds,
     },
   };

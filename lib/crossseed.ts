@@ -96,12 +96,21 @@ export async function getCrossSeedStatus(): Promise<ServiceStatus> {
       };
     }
 
-    // 404 or other — server is reachable but endpoint unknown; still "connected"
+    if (res.status === 404) {
+      return {
+        name: 'Cross Seed',
+        url: BASE_URL,
+        connected: false,
+        error: `Endpoint /api/torrents introuvable (HTTP 404) — vérifiez l'URL Cross Seed ou mettez à jour vers v6+`,
+      };
+    }
+
+    // Other non-OK status — server reachable but something is wrong
     return {
       name: 'Cross Seed',
       url: BASE_URL,
-      connected: true,
-      version: `reachable (HTTP ${res.status})`,
+      connected: false,
+      error: `HTTP ${res.status} — ${res.statusText || 'réponse inattendue du serveur'}`,
     };
   } catch (err) {
     return {

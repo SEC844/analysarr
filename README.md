@@ -10,10 +10,11 @@ Analysarr is a self-hosted, dark-mode-first web dashboard that gives you an inst
 
 ## Features
 
-- **Dashboard** — stat cards (movies, series, episodes, seeding count, hardlinks, total seeding size) + full media grid with poster images
-- **Torrent list** — all active qBittorrent torrents cross-referenced with Radarr/Sonarr, color-coded by state
+- **Dashboard** — stat cards (movies, series, episodes, seeding count, hardlinks, total seeding size) + full media grid with poster images. Only downloaded media is shown — wanted/missing items are excluded.
+- **Torrent list** — all active qBittorrent torrents cross-referenced with Radarr/Sonarr, color-coded by state. ETA shows `∞` for seeding torrents.
 - **Issues panel** — auto-detected problems: missing torrents, orphan torrents, duplicates, copies instead of hardlinks
 - **Settings** — live connection status per service with one-click test, masked API key display
+- **Inode-based hardlink detection** — compares filesystem inodes instead of paths, giving a reliable hardlink status regardless of path layout
 - Auto-refresh every 60 seconds (configurable)
 - Poster images proxied server-side (no CORS, no key exposure)
 - Fully responsive — mobile, tablet, desktop
@@ -27,7 +28,7 @@ Analysarr is a self-hosted, dark-mode-first web dashboard that gives you an inst
 version: "3.8"
 services:
   analysarr:
-    image: ghcr.io/your-username/analysarr:latest
+    image: ghcr.io/SEC844/analysarr:latest
     container_name: analysarr
     ports:
       - "3000:3000"
@@ -40,8 +41,9 @@ services:
       - QBIT_USERNAME=admin
       - QBIT_PASSWORD=your_password
       - REFRESH_INTERVAL=60
-      - PATH_MAP_FROM=/data
-      - PATH_MAP_TO=/media
+    volumes:
+      - /mnt/user/data:/data:ro      # qBittorrent download root
+      - /mnt/user/media:/media:ro    # Radarr / Sonarr media root
     restart: unless-stopped
     networks:
       - media
@@ -58,7 +60,7 @@ Then open [http://localhost:3000](http://localhost:3000).
 ## Build from source
 
 ```bash
-git clone https://github.com/your-username/analysarr
+git clone https://github.com/SEC844/analysarr
 cd analysarr
 docker build -t analysarr .
 ```
@@ -84,8 +86,11 @@ npm run dev
 | `QBIT_USERNAME` | No | `admin` | qBittorrent WebUI username |
 | `QBIT_PASSWORD` | Yes | — | qBittorrent WebUI password |
 | `REFRESH_INTERVAL` | No | `60` | Dashboard auto-refresh interval in seconds |
-| `PATH_MAP_FROM` | No | — | Path prefix inside the qBittorrent container (e.g. `/data`) |
-| `PATH_MAP_TO` | No | — | Corresponding path inside the Radarr/Sonarr container (e.g. `/media`) |
+| `PATH_MAP_FROM` | No | — | Fallback path prefix used by qBittorrent (e.g. `/data`) |
+| `PATH_MAP_TO` | No | — | Corresponding prefix used by Radarr/Sonarr (e.g. `/media`) |
+| `CROSSSEED_URL` | No | — | Base URL of your Cross Seed instance |
+| `CROSSSEED_PORT` | No | `2468` | Cross Seed port override |
+| `CROSSSEED_API_KEY` | No | — | Cross Seed API key (`cross-seed api-key`) |
 
 > **No `.env` file is required.** All values are injected via `docker-compose` environment blocks.
 
@@ -95,18 +100,42 @@ npm run dev
 
 ### How does hardlink detection work?
 
-Analysarr compares the `content_path` (or `save_path`) of each qBittorrent torrent with the file path reported by Radarr/Sonarr. If the paths overlap, the file is considered hardlinked.
+Analysarr compares the **inode** of each file reported by Radarr/Sonarr against the inode of the corresponding qBittorrent torrent file. Two files with identical inodes are hardlinks of the same data — this is the most reliable detection method regardless of path layout.
+
+For this to work, the same directories used by qBittorrent and Radarr/Sonarr must be mounted **read-only** into the Analysarr container. See the volume mounts in the docker-compose example above.
+
+When the filesystem is not mounted (no volumes configured), Analysarr falls back to a path-overlap comparison using `PATH_MAP_FROM` / `PATH_MAP_TO`.
+
+### What volumes should I mount on Unraid?
+
+Mount the Unraid user share(s) that contain your downloads and media library:
+
+```yaml
+volumes:
+  - /mnt/user/data:/data:ro      # if torrents and media are both under /mnt/user/data
+  # OR if they are on separate shares:
+  - /mnt/user/downloads:/data:ro
+  - /mnt/user/media:/media:ro
+```
+
+The paths inside the container (`/data`, `/media`) must match what qBittorrent and Radarr/Sonarr report as their file paths.
 
 ### What is `PATH_MAP_FROM` / `PATH_MAP_TO`?
 
-In a typical Docker setup, qBittorrent mounts your downloads at `/data/torrents` while Radarr/Sonarr see the same files at `/media/torrents`. These environment variables tell Analysarr how to translate between the two path spaces so it can match files correctly.
+These variables are a fallback for when the filesystem is **not** mounted. They translate qBittorrent paths to \*arr paths for a path-overlap comparison.
 
 **Example:**
 ```
 PATH_MAP_FROM=/data
 PATH_MAP_TO=/media
 ```
-A qBit path of `/data/torrents/Movie.mkv` will be mapped to `/media/torrents/Movie.mkv` before comparing with Radarr paths.
+A qBit path of `/data/torrents/Movie.mkv` is translated to `/media/torrents/Movie.mkv` before comparing with Radarr paths.
+
+If you mount the volumes (recommended), inode comparison is used automatically and these variables are not needed.
+
+### Why does Cross Seed show "HTTP 404"?
+
+Cross Seed v6+ is required for the `/api/torrents` endpoint. If you are running an older version, either update Cross Seed or the integration will be disabled (the rest of the dashboard still works normally).
 
 ### Why are API keys not visible in Settings?
 
