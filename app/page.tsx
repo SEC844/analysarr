@@ -29,7 +29,7 @@ export default function DashboardPage() {
   });
 
   const stats = data?.stats;
-  const allMedia = data?.media ?? [];
+  const allMedia = useMemo(() => data?.media ?? [], [data]);
 
   // ── Counts per filter tab ──────────────────────────────────────────────────
   const counts = useMemo(() => ({

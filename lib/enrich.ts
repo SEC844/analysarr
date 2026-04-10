@@ -134,9 +134,7 @@ function checkInodes(rawArrPaths: string[], torrents: QbitTorrent[]): boolean | 
                   if (statSync(qp).isDirectory()) {
                     anyAccessible = true;
                     const qInodes = collectInodes(qp, 5);
-                    for (const ino of qInodes) {
-                      if (arrInodes.has(ino)) return true;
-                    }
+                    if (Array.from(qInodes).some(ino => arrInodes.has(ino))) return true;
                   }
                 } catch { /* not accessible */ }
               }
