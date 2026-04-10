@@ -1,5 +1,7 @@
 import { statSync, readdirSync } from 'fs';
 import { join as joinPath } from 'path';
+import { loadConfig } from './config';
+import type { PathMapping } from './config';
 import type {
   RadarrMovie,
   SonarrSeries,
@@ -11,9 +13,6 @@ import type {
   HardlinkStatus,
 } from './types';
 
-const PATH_MAP_FROM = process.env.PATH_MAP_FROM ?? '';
-const PATH_MAP_TO   = process.env.PATH_MAP_TO   ?? '';
-
 export const SEEDING_STATES = new Set([
   'uploading', 'stalledUP', 'checkingUP', 'queuedUP', 'forcedUP',
 ]);
@@ -24,11 +23,25 @@ const CROSSSEED_TAG_RE = /cross-seed/i;
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
-function mapPath(p: string): string {
-  if (PATH_MAP_FROM && PATH_MAP_TO && p.startsWith(PATH_MAP_FROM)) {
-    return PATH_MAP_TO + p.slice(PATH_MAP_FROM.length);
-  }
-  return p;
+/**
+ * Build a path-mapping function from UI-configured mappings.
+ * Falls back to PATH_MAP_FROM/TO env vars for backwards compatibility.
+ */
+function makeMapFn(mappings: PathMapping[]): (p: string) => string {
+  const ENV_FROM = process.env.PATH_MAP_FROM ?? '';
+  const ENV_TO   = process.env.PATH_MAP_TO   ?? '';
+
+  return (p: string): string => {
+    for (const { from, to } of mappings) {
+      if (from && to && p.startsWith(from)) {
+        return to + p.slice(from.length);
+      }
+    }
+    if (ENV_FROM && ENV_TO && p.startsWith(ENV_FROM)) {
+      return ENV_TO + p.slice(ENV_FROM.length);
+    }
+    return p;
+  };
 }
 
 function norm(p: string | undefined): string {
@@ -89,15 +102,19 @@ function collectInodes(dir: string, maxFiles = 20): Set<number> {
  *   false — paths accessible but no matching inode (not hardlinked)
  *   null  — filesystem not mounted; caller should fall back to path comparison
  */
-function checkInodes(rawArrPaths: string[], torrents: QbitTorrent[]): boolean | null {
+function checkInodes(
+  rawArrPaths: string[],
+  torrents: QbitTorrent[],
+  mapFn: (p: string) => string,
+): boolean | null {
   let anyAccessible = false;
 
   for (const arrPath of rawArrPaths) {
     if (!arrPath) continue;
 
-    // Translate arr path to a container-accessible path via PATH_MAP
-    // e.g. /mnt/user/Data/media/tv/Show → /media/tv/Show
-    const arrResolved = norm(mapPath(arrPath));
+    // Translate arr path to a container-accessible path via configured mappings
+    // e.g. /data/media/tv/Show → /media/tv/Show
+    const arrResolved = norm(mapFn(arrPath));
 
     let arrStat = null;
     try { arrStat = statSync(arrResolved); anyAccessible = true; } catch { continue; }
@@ -211,18 +228,19 @@ function hardlinkStatus(
   rawArrPaths: string[],    // unmapped paths as reported by Radarr/Sonarr — for inode check
   mappedArrPaths: string[], // path-mapped paths — for fallback overlap check
   torrents: QbitTorrent[],
+  mapFn: (p: string) => string,
 ): HardlinkStatus {
   if ((rawArrPaths.length === 0 && mappedArrPaths.length === 0) || torrents.length === 0) {
     return 'unknown';
   }
 
   // 1. Inode-based comparison (preferred — reliable on any path layout)
-  const inodeResult = checkInodes(rawArrPaths, torrents);
+  const inodeResult = checkInodes(rawArrPaths, torrents, mapFn);
   if (inodeResult === true)  return 'hardlinked';
   if (inodeResult === false) return 'not_hardlinked';
 
   // 2. Path-overlap fallback (when filesystem is not mounted inside the container)
-  const torrentPaths = torrents.map(t => norm(mapPath(t.content_path ?? t.save_path ?? '')));
+  const torrentPaths = torrents.map(t => norm(mapFn(t.content_path ?? t.save_path ?? '')));
   const matched = mappedArrPaths.some(fp => torrentPaths.some(tp => pathsOverlap(fp, tp)));
   return matched ? 'hardlinked' : 'not_hardlinked';
 }
@@ -234,6 +252,10 @@ export function enrichMedia(
   series: SonarrSeries[],
   torrents: QbitTorrent[],
 ): { media: EnrichedMedia[]; issues: IssueItem[]; stats: DashboardStats } {
+  // Load path mappings from config file (UI-configured) once per enrichment run
+  const { pathMappings } = loadConfig();
+  const mapFn = makeMapFn(pathMappings);
+
   const issues: IssueItem[] = [];
   const enriched: EnrichedMedia[] = [];
   const matchedHashes = new Set<string>();
@@ -256,12 +278,12 @@ export function enrichMedia(
     const rawFilePaths = rawFilePath ? [rawFilePath] : [];
 
     // Mapped path — used for path-overlap fallback and display
-    const mappedFilePath = rawFilePath ? norm(mapPath(rawFilePath)) : null;
+    const mappedFilePath = rawFilePath ? norm(mapFn(rawFilePath)) : null;
     const filePaths = mappedFilePath ? [mappedFilePath] : [];
 
     // Match by path first, then by name
     const matchedTorrents = torrents.filter(t => {
-      const tp = norm(mapPath(t.content_path ?? t.save_path ?? ''));
+      const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
       if (filePaths.some(fp => pathsOverlap(fp, tp))) return true;
       return matchScore(t.name, movie.title) > 0;
     });
@@ -269,7 +291,7 @@ export function enrichMedia(
     matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
     const seeding  = seedingStatus(matchedTorrents);
-    const hardlink = hardlinkStatus(rawFilePaths, filePaths, matchedTorrents);
+    const hardlink = hardlinkStatus(rawFilePaths, filePaths, matchedTorrents, mapFn);
     const csCount  = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
     const posterImg = movie.images.find(i => i.coverType === 'poster');
 
@@ -317,11 +339,11 @@ export function enrichMedia(
     const rawFilePaths = rawShowPath ? [rawShowPath] : [];
 
     // Mapped path — used for path-overlap fallback and display
-    const mappedShowPath = rawShowPath ? norm(mapPath(rawShowPath)) : '';
+    const mappedShowPath = rawShowPath ? norm(mapFn(rawShowPath)) : '';
     const filePaths = mappedShowPath ? [mappedShowPath] : [];
 
     const matchedTorrents = torrents.filter(t => {
-      const tp = norm(mapPath(t.content_path ?? t.save_path ?? ''));
+      const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
       if (mappedShowPath && pathsOverlap(mappedShowPath, tp)) return true;
       return matchScore(t.name, show.title) > 0;
     });
@@ -329,7 +351,7 @@ export function enrichMedia(
     matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
     const seeding  = seedingStatus(matchedTorrents);
-    const hardlink = hardlinkStatus(rawFilePaths, filePaths, matchedTorrents);
+    const hardlink = hardlinkStatus(rawFilePaths, filePaths, matchedTorrents, mapFn);
     const csCount  = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
     const epSeeding = matchedTorrents.filter(t => SEEDING_STATES.has(t.state)).length;
     const posterImg = show.images.find(i => i.coverType === 'poster');

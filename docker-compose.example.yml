@@ -7,48 +7,22 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # ── Radarr ──────────────────────────────────────────────────────────────
-      - RADARR_URL=http://radarr         # hostname / IP only (no port needed here)
-      - RADARR_PORT=7878                 # optional — overrides port in RADARR_URL
+      - RADARR_URL=http://radarr:7878
       - RADARR_API_KEY=your_radarr_api_key
-
-      # ── Sonarr ──────────────────────────────────────────────────────────────
-      - SONARR_URL=http://sonarr
-      - SONARR_PORT=8989                 # optional
+      - SONARR_URL=http://sonarr:8989
       - SONARR_API_KEY=your_sonarr_api_key
-
-      # ── qBittorrent ─────────────────────────────────────────────────────────
-      - QBIT_URL=http://qbittorrent
-      - QBIT_PORT=8080                   # optional
+      - QBIT_URL=http://qbittorrent:8080
       - QBIT_USERNAME=admin
       - QBIT_PASSWORD=your_password
-
-      # ── Cross Seed (optional — remove block to disable) ─────────────────────
-      - CROSSSEED_URL=http://cross-seed
-      - CROSSSEED_PORT=2468              # optional, default 2468
+      # Optional
+      - REFRESH_INTERVAL=60
+      - CROSSSEED_URL=http://cross-seed:2468
       - CROSSSEED_API_KEY=your_crossseed_api_key
 
-      # ── General ─────────────────────────────────────────────────────────────
-      # Auto-refresh interval in seconds (default: 60)
-      - REFRESH_INTERVAL=60
-
-      # Path mapping (fallback) — only needed if inode detection is disabled.
-      # Translates qBittorrent paths to *arr paths for path-based comparison.
-      # Example: qBit sees /data/torrents, Radarr/Sonarr sees /media/torrents
-      - PATH_MAP_FROM=/data
-      - PATH_MAP_TO=/media
-
-    # ── Volume mounts for inode-based hardlink detection ──────────────────────
-    # Mount the same directories that qBittorrent and Radarr/Sonarr use.
-    # Analysarr compares inode numbers to reliably detect hardlinks.
-    #
-    # Adapt the host paths (/mnt/user/...) to match your Unraid share layout:
     volumes:
-      - /mnt/user/data:/data:ro        # qBittorrent download root
-      - /mnt/user/media:/media:ro      # Radarr / Sonarr media root
-      # If both torrents and media live under the same share (e.g. /mnt/user/data),
-      # a single mount is enough:
-      # - /mnt/user/data:/data:ro
+      - /mnt/user/data:/data:ro          # qBittorrent download root
+      - /mnt/user/media:/media:ro        # Radarr / Sonarr media root
+      - /mnt/user/appdata/analysarr:/config  # persist path mappings configured in the UI
 
     restart: unless-stopped
     networks:

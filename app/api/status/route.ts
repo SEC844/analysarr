@@ -19,10 +19,7 @@ export async function GET() {
     sonarr,
     qbit,
     crossseed,
-    // Expose server-side path mapping config so the Settings page can display it
     config: {
-      pathMapFrom: process.env.PATH_MAP_FROM ?? '',
-      pathMapTo:   process.env.PATH_MAP_TO   ?? '',
       refreshInterval: process.env.REFRESH_INTERVAL ?? '60',
     },
   });

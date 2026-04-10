@@ -15,6 +15,7 @@ Analysarr is a self-hosted, dark-mode-first web dashboard that gives you an inst
 - **Issues panel** — auto-detected problems: missing torrents, orphan torrents, duplicates, copies instead of hardlinks
 - **Settings** — live connection status per service with one-click test, masked API key display
 - **Inode-based hardlink detection** — compares filesystem inodes instead of paths, giving a reliable hardlink status regardless of path layout
+- **Path mapper UI** — interactive file browser in Settings to configure path translations, no env vars required
 - **Media detail page** — click any poster to see all associated files (in `/media` and `/data`), active torrents with paths, cross-seed status, and a direct link to Radarr/Sonarr
 - **Cross Seed detection** via qBittorrent tags — no Cross Seed API version dependency
 - Auto-refresh every 60 seconds (configurable)
@@ -42,10 +43,14 @@ services:
       - QBIT_URL=http://qbittorrent:8080
       - QBIT_USERNAME=admin
       - QBIT_PASSWORD=your_password
+      # Optional
       - REFRESH_INTERVAL=60
+      - CROSSSEED_URL=http://cross-seed:2468
+      - CROSSSEED_API_KEY=your_crossseed_api_key
     volumes:
-      - /mnt/user/data:/data:ro      # qBittorrent download root
-      - /mnt/user/media:/media:ro    # Radarr / Sonarr media root
+      - /mnt/user/data:/data:ro              # qBittorrent download root
+      - /mnt/user/media:/media:ro            # Radarr / Sonarr media root
+      - /mnt/user/appdata/analysarr:/config  # persist path mappings set in the UI
     restart: unless-stopped
     networks:
       - media
@@ -88,13 +93,11 @@ npm run dev
 | `QBIT_USERNAME` | No | `admin` | qBittorrent WebUI username |
 | `QBIT_PASSWORD` | Yes | — | qBittorrent WebUI password |
 | `REFRESH_INTERVAL` | No | `60` | Dashboard auto-refresh interval in seconds |
-| `PATH_MAP_FROM` | No | — | Fallback path prefix used by qBittorrent (e.g. `/data`) |
-| `PATH_MAP_TO` | No | — | Corresponding prefix used by Radarr/Sonarr (e.g. `/media`) |
 | `CROSSSEED_URL` | No | — | Base URL of your Cross Seed instance |
-| `CROSSSEED_PORT` | No | `2468` | Cross Seed port override |
 | `CROSSSEED_API_KEY` | No | — | Cross Seed API key (`cross-seed api-key`) |
 | `NEXT_PUBLIC_RADARR_URL` | No | — | Browser-accessible Radarr URL for external links on detail pages |
 | `NEXT_PUBLIC_SONARR_URL` | No | — | Browser-accessible Sonarr URL for external links on detail pages |
+| `CONFIG_PATH` | No | `/config/mappings.json` | Override path for the UI-configured mappings file |
 
 > **No `.env` file is required.** All values are injected via `docker-compose` environment blocks.
 
@@ -108,42 +111,35 @@ Analysarr compares the **inode** of each file reported by Radarr/Sonarr against 
 
 For this to work, the same directories used by qBittorrent and Radarr/Sonarr must be mounted **read-only** into the Analysarr container. See the volume mounts in the docker-compose example above.
 
-When the filesystem is not mounted (no volumes configured), Analysarr falls back to a path-overlap comparison using `PATH_MAP_FROM` / `PATH_MAP_TO`.
+### What volumes should I mount?
 
-### What volumes should I mount on Unraid?
-
-Volume mounts are **required** for inode-based hardlink detection. Analysarr calls `fs.stat()` on the file paths reported by qBittorrent and Radarr/Sonarr — those paths must exist inside the Analysarr container.
-
-Mount the Unraid user share(s) read-only:
+Mount your download and media roots read-only so Analysarr can call `fs.stat()` on the files:
 
 ```yaml
 volumes:
-  - /mnt/user/data:/data:ro      # if torrents and media are both under /mnt/user/data
-  # OR if they are on separate shares:
-  - /mnt/user/downloads:/data:ro
-  - /mnt/user/media:/media:ro
+  - /mnt/user/data:/data:ro      # qBittorrent download root
+  - /mnt/user/media:/media:ro    # Radarr / Sonarr media root
+  - /mnt/user/appdata/analysarr:/config  # persist UI-configured path mappings
 ```
 
-The paths inside the container (`/data`, `/media`) must match what qBittorrent and Radarr/Sonarr report as their file paths. If volumes are not mounted, Analysarr automatically falls back to path-overlap comparison using `PATH_MAP_FROM` / `PATH_MAP_TO`.
+### What if my paths inside and outside the container differ?
 
-### What is `PATH_MAP_FROM` / `PATH_MAP_TO`?
+If Radarr/Sonarr report paths that start with a different prefix than what is mounted in the Analysarr container, you need to configure a **path mapping**.
 
-These variables are a fallback for when the filesystem is **not** mounted. They translate qBittorrent paths to \*arr paths for a path-overlap comparison.
+Instead of setting environment variables, open **Settings → Path mappings** and use the interactive file browser to select:
 
-**Example:**
-```
-PATH_MAP_FROM=/data
-PATH_MAP_TO=/media
-```
-A qBit path of `/data/torrents/Movie.mkv` is translated to `/media/torrents/Movie.mkv` before comparing with Radarr paths.
+- **Source** — the prefix that Radarr/Sonarr uses (e.g. `/data/media/tv`)
+- **Target** — the corresponding path inside the Analysarr container (e.g. `/media/tv`)
 
-If you mount the volumes (recommended), inode comparison is used automatically and these variables are not needed.
+Mappings are saved to `/config/mappings.json` and take effect immediately on the next dashboard refresh. Mount a `/config` volume so they survive container restarts.
+
+**Example on Unraid:** Sonarr reports paths as `/data/media/tv/Show` but Analysarr mounts `/mnt/user/Data/media` as `/media`. Set:
+- Source: `/data/media`
+- Target: `/media`
 
 ### How does Cross Seed detection work?
 
-Cross Seed detection no longer relies on the Cross Seed REST API. Instead, Analysarr reads the `tags` and `category` fields of each qBittorrent torrent and flags any torrent containing `cross-seed` as a cross-seed. This matches the default tag that Cross Seed sets when injecting a torrent into qBittorrent and works with any Cross Seed version.
-
-The **Settings** page still shows a live connection status for Cross Seed using the correct endpoints (`GET /api/ping` and `GET /api/status` with `X-Api-Key` header).
+Cross Seed detection reads the `tags` and `category` fields of each qBittorrent torrent and flags any torrent containing `cross-seed` as a cross-seed. This matches the default tag that Cross Seed sets when injecting a torrent into qBittorrent and works with any Cross Seed version.
 
 ### Why are API keys not visible in Settings?
 

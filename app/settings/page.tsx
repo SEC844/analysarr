@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { PathMapper } from '@/components/PathMapper';
 import { maskApiKey } from '@/lib/utils';
 import type { ServiceStatus } from '@/lib/types';
 
@@ -13,8 +14,6 @@ interface StatusData {
   qbit:      ServiceStatus;
   crossseed: ServiceStatus;
   config: {
-    pathMapFrom:     string;
-    pathMapTo:       string;
     refreshInterval: string;
   };
 }
@@ -68,6 +67,9 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Path mappings */}
+      <PathMapper />
+
       {/* Config table */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
@@ -100,8 +102,6 @@ export default function SettingsPage() {
                 ['SONARR_API_KEY',    showKeys ? '(server-side only)' : maskApiKey('hidden')      ],
                 ['QBIT_URL',          data?.qbit?.url                                             ],
                 ['REFRESH_INTERVAL',  cfg?.refreshInterval ? `${cfg.refreshInterval}s` : '60s'   ],
-                ['PATH_MAP_FROM',     cfg?.pathMapFrom || '(not set)'                             ],
-                ['PATH_MAP_TO',       cfg?.pathMapTo   || '(not set)'                             ],
                 ['CROSSSEED_URL',     data?.crossseed?.url || '(not set)'                        ],
                 ['CROSSSEED_API_KEY', showKeys ? '(server-side only)' : maskApiKey('hidden')     ],
               ] as [string, string | undefined][]).map(([key, value]) => (
@@ -131,7 +131,8 @@ export default function SettingsPage() {
           <strong className="text-zinc-400">Hardlink detection:</strong>{' '}
           mount your <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono">/data</code> and{' '}
           <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono">/media</code> volumes read-only
-          so Analysarr can compare inodes. PATH_MAP_FROM/TO is only needed as a fallback if volumes are not mounted.
+          so Analysarr can compare inodes. If paths differ between services and this container,
+          configure them in the <strong className="text-zinc-400">Path mappings</strong> section above.
         </p>
       </section>
     </div>
