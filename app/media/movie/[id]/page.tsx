@@ -60,12 +60,26 @@ export default function MovieDetailPage() {
   );
 
   const { media } = data;
+  const fileSize = data.radarrMovie?.movieFile?.size ?? 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
       <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
         <ArrowLeft className="h-4 w-4" /> Dashboard
       </Link>
+
+      {/* Alerts — shown at top so they're immediately visible */}
+      {media.hasDuplicates && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">Version différente détectée</p>
+            <p className="text-xs text-amber-400/80 mt-0.5">
+              {media.duplicateCount} torrent(s) dans /data ne correspondent pas à la version Radarr (taille différente, hors cross-seeds).
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Hero */}
       <div className="flex gap-6">
@@ -167,8 +181,13 @@ export default function MovieDetailPage() {
         ) : (
           <div className="space-y-1">
             {media.filePaths.map(p => (
-              <div key={p} className="flex items-center justify-between gap-3 rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
-                <p className="break-all font-mono text-xs text-zinc-300">{p}</p>
+              <div key={p} className="flex items-center gap-3 rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2">
+                {fileSize > 0 && (
+                  <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                    {formatBytes(fileSize)}
+                  </span>
+                )}
+                <p className="flex-1 break-all font-mono text-xs text-zinc-300">{p}</p>
                 <HardlinkBadge status={media.hardlinkStatus} />
               </div>
             ))}
@@ -199,12 +218,6 @@ export default function MovieDetailPage() {
         </Section>
       )}
 
-      {media.hasDuplicates && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-300">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {media.torrents.length} torrents correspondent à ce film — possible doublon.
-        </div>
-      )}
     </div>
   );
 }

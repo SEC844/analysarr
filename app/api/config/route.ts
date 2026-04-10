@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
 
   const updated: AppConfig = {
     pathMappings:    body.pathMappings    ?? current.pathMappings,
+    manualLinks:     body.manualLinks     ?? current.manualLinks,
     refreshInterval: body.refreshInterval ?? current.refreshInterval,
     services: {
       radarr:    { ...current.services?.radarr,    ...body.services?.radarr    },

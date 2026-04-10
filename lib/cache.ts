@@ -5,8 +5,8 @@
  * A background interval pre-fetches fresh data so users never wait.
  */
 
-import { getRadarrMovies } from './radarr';
-import { getSonarrSeries } from './sonarr';
+import { getRadarrMovies, getRadarrHistoryHashes } from './radarr';
+import { getSonarrSeries, getSonarrHistoryHashes } from './sonarr';
 import { getQbitTorrents } from './qbit';
 import { enrichMedia } from './enrich';
 import { loadConfig } from './config';
@@ -26,17 +26,31 @@ let _refreshing = false;
 let _bgTimer: ReturnType<typeof setInterval> | null = null;
 
 async function fetchFresh(): Promise<Omit<CachedDashboard, 'ageSeconds'>> {
-  const [moviesR, seriesR, torrentsR] = await Promise.allSettled([
+  const [moviesR, seriesR, torrentsR, radarrHistR, sonarrHistR] = await Promise.allSettled([
     getRadarrMovies(),
     getSonarrSeries(),
     getQbitTorrents(),
+    getRadarrHistoryHashes(),
+    getSonarrHistoryHashes(),
   ]);
 
   const movies   = moviesR.status   === 'fulfilled' ? moviesR.value   : [];
   const series   = seriesR.status   === 'fulfilled' ? seriesR.value   : [];
   const torrents = torrentsR.status === 'fulfilled' ? torrentsR.value : [];
 
-  const { media, issues, stats } = enrichMedia(movies, series, torrents);
+  // Build manual link map from config
+  const { manualLinks = [] } = loadConfig();
+  const manualMap = new Map(
+    manualLinks.map(l => [l.torrentHash.toLowerCase(), { type: l.mediaType as 'movie' | 'series', id: l.mediaId }])
+  );
+
+  const history = {
+    movies: radarrHistR.status === 'fulfilled' ? radarrHistR.value : new Map<string, number>(),
+    series: sonarrHistR.status === 'fulfilled' ? sonarrHistR.value : new Map<string, number>(),
+    manual: manualMap,
+  };
+
+  const { media, issues, stats } = enrichMedia(movies, series, torrents, history);
 
   return {
     media, issues, stats,

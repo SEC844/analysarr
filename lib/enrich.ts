@@ -50,18 +50,23 @@ function pathsOverlap(a: string, b: string): boolean {
 
 // ── Inode helpers (server-side only) ─────────────────────────────────────────
 
-function safeIno(p: string): number | null {
+/**
+ * IMPORTANT: use { bigint: true } so inode numbers are exact BigInts.
+ * Without this, inodes > Number.MAX_SAFE_INTEGER (~9e15) get rounded and
+ * different files may appear to share the same inode.
+ */
+function safeIno(p: string): bigint | null {
   if (!p) return null;
   try {
-    const s = statSync(p);
-    return s.ino > 0 ? s.ino : null;
+    const s = statSync(p, { bigint: true });
+    return s.ino > 0n ? s.ino : null;
   } catch {
     return null;
   }
 }
 
-function collectInodes(dir: string, maxFiles = 20): Set<number> {
-  const result = new Set<number>();
+function collectInodes(dir: string, maxFiles = 20): Set<bigint> {
+  const result = new Set<bigint>();
   function walk(d: string, depth: number) {
     if (depth > 2 || result.size >= maxFiles) return;
     try {
@@ -92,7 +97,7 @@ function checkInodes(
     if (!arrPath) continue;
     const arrResolved = norm(mapFn(arrPath));
     let arrStat = null;
-    try { arrStat = statSync(arrResolved); anyAccessible = true; } catch { continue; }
+    try { arrStat = statSync(arrResolved, { bigint: true }); anyAccessible = true; } catch { continue; }
 
     if (arrStat.isFile()) {
       const arrIno = arrStat.ino;
@@ -100,7 +105,7 @@ function checkInodes(
         const qp = norm(t.content_path ?? t.save_path ?? '');
         if (!qp) continue;
         let qStat = null;
-        try { qStat = statSync(qp); anyAccessible = true; } catch { continue; }
+        try { qStat = statSync(qp, { bigint: true }); anyAccessible = true; } catch { continue; }
         if (qStat.isFile() && qStat.ino === arrIno) return true;
         if (qStat.isDirectory() && collectInodes(qp, 50).has(arrIno)) return true;
       }
@@ -111,7 +116,7 @@ function checkInodes(
         const qp = norm(t.content_path ?? t.save_path ?? '');
         if (!qp) continue;
         let qStat = null;
-        try { qStat = statSync(qp); anyAccessible = true; } catch { continue; }
+        try { qStat = statSync(qp, { bigint: true }); anyAccessible = true; } catch { continue; }
         if (qStat.isFile() && arrInodes.has(qStat.ino)) return true;
         if (qStat.isDirectory()) {
           const qInodes = collectInodes(qp, 20);
@@ -162,19 +167,35 @@ function normalizeName(s: string): string {
 /**
  * Returns a match score (0 = no match) between a torrent and a media entry.
  *
- * Key fix: year must appear in the torrent name to avoid matching
- * "Avengers (2012)" against "Avengers: Endgame (2019)" etc.
+ * Strategy:
+ * 1. Year gate — torrent must contain the release year (avoids Avengers cross-match)
+ * 2. Token match — every word of the media title must appear in the normalized torrent name
+ *    This handles dots/underscores as separators and is robust to word reordering.
+ * 3. Short title fallback — single-word or 2-token titles use substring matching.
  */
 function matchScore(torrentName: string, mediaTitle: string, year: number): number {
-  // Year gate: torrent name must contain the release year (exact)
+  // Year gate: torrent name must contain the release year (exact 4-digit match)
   if (year > 0 && !torrentName.includes(String(year))) return 0;
 
   const nt = normalizeName(torrentName);
   const nm = normalizeName(mediaTitle);
   if (!nt || !nm || nm.length < 2) return 0;
+
+  // Exact normalized match
   if (nt === nm) return 100;
-  if (nm.length >= 3 && nt.includes(nm)) return 85;
-  if (nt.length >= 3 && nm.includes(nt)) return 70;
+
+  // Token-based match: all title words must appear in the torrent name
+  const titleTokens = nm.split(' ').filter(w => w.length >= 2);
+  if (titleTokens.length >= 2) {
+    const matched = titleTokens.filter(tok => nt.includes(tok));
+    const ratio   = matched.length / titleTokens.length;
+    if (ratio === 1.0) return 90; // All tokens matched — high confidence
+    if (ratio >= 0.8) return 65;  // 80%+ — acceptable
+    return 0;                     // Below 80% — too risky
+  }
+
+  // Single-word titles: substring is sufficient
+  if (nm.length >= 3 && nt.includes(nm)) return 80;
   return 0;
 }
 
@@ -265,13 +286,36 @@ function classifyTorrents(
 
 // ── Main enrichment ───────────────────────────────────────────────────────────
 
+export interface HistoryMaps {
+  /** torrentHash (lowercase) → Radarr movieId */
+  movies: Map<string, number>;
+  /** torrentHash (lowercase) → Sonarr seriesId */
+  series: Map<string, number>;
+  /** torrentHash (lowercase) → { mediaType, mediaId } from user-configured manual links */
+  manual: Map<string, { type: 'movie' | 'series'; id: number }>;
+}
+
 export function enrichMedia(
   movies: RadarrMovie[],
   series: SonarrSeries[],
   torrents: QbitTorrent[],
+  history?: HistoryMaps,
 ): { media: EnrichedMedia[]; issues: IssueItem[]; stats: DashboardStats } {
-  const { pathMappings } = loadConfig();
+  const { pathMappings, manualLinks = [] } = loadConfig();
   const mapFn = makeMapFn(pathMappings);
+
+  // Build manual link map (from UI-configured overrides)
+  const manualMap = new Map<string, { type: 'movie' | 'series'; id: number }>();
+  for (const link of manualLinks) {
+    manualMap.set(link.torrentHash.toLowerCase(), { type: link.mediaType, id: link.mediaId });
+  }
+
+  const hist: HistoryMaps = history ?? {
+    movies: new Map(),
+    series: new Map(),
+    manual: manualMap,
+  };
+  if (!history) hist.manual = manualMap;
 
   const issues: IssueItem[] = [];
   const enriched: EnrichedMedia[] = [];
@@ -295,9 +339,16 @@ export function enrichMedia(
     const arrSize        = movie.movieFile?.size ?? 0;
 
     const matchedTorrents = torrents.filter(t => {
+      const hash = t.hash.toLowerCase();
+      // 1. Manual link (user-configured)
+      const manual = hist.manual.get(hash);
+      if (manual?.type === 'movie' && manual.id === movie.id) return true;
+      // 2. History-based match (most reliable — direct hash from Radarr download history)
+      if (hist.movies.get(hash) === movie.id) return true;
+      // 3. Path overlap
       const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
       if (filePaths.some(fp => pathsOverlap(fp, tp))) return true;
-      // Year-aware name matching: won't confuse Avengers (2012) with Avengers: Endgame (2019)
+      // 4. Year-aware token-based name match (fallback)
       return matchScore(t.name, movie.title, movie.year) > 0;
     });
 
@@ -360,9 +411,16 @@ export function enrichMedia(
     const arrSize        = show.statistics?.sizeOnDisk ?? 0;
 
     const matchedTorrents = torrents.filter(t => {
+      const hash = t.hash.toLowerCase();
+      // 1. Manual link
+      const manual = hist.manual.get(hash);
+      if (manual?.type === 'series' && manual.id === show.id) return true;
+      // 2. History-based match
+      if (hist.series.get(hash) === show.id) return true;
+      // 3. Path overlap
       const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
       if (mappedShowPath && pathsOverlap(mappedShowPath, tp)) return true;
-      // Year-aware name matching for series too
+      // 4. Name-based fallback
       return matchScore(t.name, show.title, show.year) > 0;
     });
 

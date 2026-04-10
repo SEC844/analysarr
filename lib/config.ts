@@ -15,8 +15,15 @@ export interface ServiceConfig {
   password?: string;
 }
 
+export interface ManualLink {
+  torrentHash: string;
+  mediaType: 'movie' | 'series';
+  mediaId: number;
+}
+
 export interface AppConfig {
   pathMappings: PathMapping[];
+  manualLinks: ManualLink[];
   services: {
     radarr?: ServiceConfig;
     sonarr?: ServiceConfig;
@@ -33,6 +40,7 @@ const CONFIG_TTL_MS = 5_000;
 
 export const DEFAULT_CONFIG: AppConfig = {
   pathMappings: [],
+  manualLinks: [],
   services: {},
   refreshInterval: 60,
 };

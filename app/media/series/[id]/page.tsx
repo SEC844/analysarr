@@ -60,10 +60,22 @@ export default function SeriesDetailPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Back */}
       <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
         <ArrowLeft className="h-4 w-4" /> Dashboard
       </Link>
+
+      {/* Alerts at top */}
+      {media.hasDuplicates && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">Version différente détectée</p>
+            <p className="text-xs text-amber-400/80 mt-0.5">
+              {media.duplicateCount} torrent(s) dans /data ne correspondent pas à la version Sonarr (taille différente, hors cross-seeds).
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Hero */}
       <div className="flex gap-6">
@@ -164,9 +176,13 @@ export default function SeriesDetailPage() {
                   {bySeason[season]
                     .sort((a, b) => a.relativePath.localeCompare(b.relativePath))
                     .map(f => (
-                      <div key={f.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-                        <p className="break-all font-mono text-xs text-zinc-300">{f.path}</p>
-                        <p className="shrink-0 text-xs text-zinc-500">{formatBytes(f.size)}</p>
+                      <div key={f.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+                        {f.size > 0 && (
+                          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                            {formatBytes(f.size)}
+                          </span>
+                        )}
+                        <p className="break-all font-mono text-xs text-zinc-300 flex-1">{f.path}</p>
                       </div>
                     ))}
                 </div>
@@ -197,14 +213,6 @@ export default function SeriesDetailPage() {
             ))}
           </div>
         </Section>
-      )}
-
-      {/* Issues */}
-      {media.hasDuplicates && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-300">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {media.torrents.length} torrents correspondent à cette série — possible doublon.
-        </div>
       )}
     </div>
   );

@@ -37,21 +37,47 @@ export const REFRESH_INTERVAL_MS =
   parseInt(process.env.NEXT_PUBLIC_REFRESH_INTERVAL ?? '60', 10) * 1000;
 
 /**
+ * Normalize a raw URL entered by the user into a clean base URL.
+ *
+ * Handles:
+ *   - Bare host:port           "10.0.0.100:8080"  → "http://10.0.0.100:8080"
+ *   - Trailing slash           "http://host:port/" → "http://host:port"
+ *   - Trailing path            "http://host:port/ui" → "http://host:port/ui"
+ *   - Port override            portOverride replaces whatever port is in the URL
+ */
+export function normalizeUrl(raw: string): string {
+  if (!raw) return '';
+  let url = raw.trim();
+
+  // Add protocol if missing
+  if (!/^https?:\/\//i.test(url)) {
+    url = 'http://' + url;
+  }
+
+  // Remove trailing slash
+  url = url.replace(/\/+$/, '');
+
+  return url;
+}
+
+/**
  * Builds the final base URL for a service.
- * If a PORT override env var is set, it replaces the port in the URL.
- * This lets users set e.g. RADARR_URL=http://radarr and RADARR_PORT=7878 separately.
+ * If a PORT override env var is set it replaces the port in the URL.
  */
 export function buildServiceUrl(url: string, portOverride: string | undefined): string {
-  if (!url) return '';
-  if (!portOverride) return url.replace(/\/$/, '');
+  const base = normalizeUrl(url);
+  if (!base) return '';
+  if (!portOverride) return base;
+
   const port = parseInt(portOverride, 10);
-  if (isNaN(port)) return url.replace(/\/$/, '');
+  if (isNaN(port)) return base;
+
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(base);
     parsed.port = String(port);
-    // Return origin only (strips path, trailing slash)
+    // Return origin only (strips path/trailing slash)
     return parsed.origin;
   } catch {
-    return url.replace(/\/$/, '');
+    return base;
   }
 }

@@ -1,5 +1,5 @@
 import type { ServiceStatus } from './types';
-import { buildServiceUrl } from './utils';
+import { buildServiceUrl, normalizeUrl } from './utils';
 import { loadConfig } from './config';
 
 const TIMEOUT_MS = 5000;
@@ -7,7 +7,7 @@ const TIMEOUT_MS = 5000;
 function getConfig() {
   const saved = loadConfig().services?.crossseed ?? {};
   return {
-    url: saved.url?.trim() || buildServiceUrl(process.env.CROSSSEED_URL ?? '', process.env.CROSSSEED_PORT),
+    url: normalizeUrl(saved.url ?? '') || buildServiceUrl(process.env.CROSSSEED_URL ?? '', process.env.CROSSSEED_PORT),
     apiKey: saved.apiKey?.trim() || (process.env.CROSSSEED_API_KEY ?? '').trim(),
   };
 }

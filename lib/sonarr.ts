@@ -1,5 +1,5 @@
 import type { SonarrSeries, SonarrEpisode, ServiceStatus } from './types';
-import { buildServiceUrl } from './utils';
+import { buildServiceUrl, normalizeUrl } from './utils';
 import { loadConfig } from './config';
 
 const TIMEOUT_MS = 5000;
@@ -8,7 +8,7 @@ const TIMEOUT_MS = 5000;
 function getConfig() {
   const saved = loadConfig().services?.sonarr ?? {};
   return {
-    url: saved.url?.trim() || buildServiceUrl(process.env.SONARR_URL ?? '', process.env.SONARR_PORT),
+    url: normalizeUrl(saved.url ?? '') || buildServiceUrl(process.env.SONARR_URL ?? '', process.env.SONARR_PORT),
     apiKey: saved.apiKey?.trim() || (process.env.SONARR_API_KEY ?? '').trim(),
   };
 }
@@ -33,6 +33,27 @@ async function sonarrFetch<T>(path: string): Promise<T> {
 
 export async function getSonarrSeries(): Promise<SonarrSeries[]> {
   return sonarrFetch<SonarrSeries[]>('/series');
+}
+
+/**
+ * Fetch download history and return a map of torrentHash → seriesId.
+ */
+export async function getSonarrHistoryHashes(): Promise<Map<string, number>> {
+  interface HistoryRecord { seriesId: number; downloadId?: string; eventType: string; }
+  interface HistoryPage  { records: HistoryRecord[] }
+
+  const map = new Map<string, number>();
+  try {
+    const page = await sonarrFetch<HistoryPage>(
+      '/history?pageSize=5000&sortKey=date&sortDirection=descending'
+    );
+    for (const r of page.records ?? []) {
+      if (r.downloadId && r.seriesId) {
+        map.set(r.downloadId.toLowerCase(), r.seriesId);
+      }
+    }
+  } catch { /* best-effort */ }
+  return map;
 }
 
 export async function getSonarrEpisodes(seriesId: number): Promise<SonarrEpisode[]> {

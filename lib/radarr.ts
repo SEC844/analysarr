@@ -1,5 +1,5 @@
 import type { RadarrMovie, ServiceStatus } from './types';
-import { buildServiceUrl } from './utils';
+import { buildServiceUrl, normalizeUrl } from './utils';
 import { loadConfig } from './config';
 
 const TIMEOUT_MS = 5000;
@@ -8,7 +8,7 @@ const TIMEOUT_MS = 5000;
 function getConfig() {
   const saved = loadConfig().services?.radarr ?? {};
   return {
-    url: saved.url?.trim() || buildServiceUrl(process.env.RADARR_URL ?? '', process.env.RADARR_PORT),
+    url: normalizeUrl(saved.url ?? '') || buildServiceUrl(process.env.RADARR_URL ?? '', process.env.RADARR_PORT),
     apiKey: saved.apiKey?.trim() || (process.env.RADARR_API_KEY ?? '').trim(),
   };
 }
@@ -33,6 +33,29 @@ async function radarrFetch<T>(path: string): Promise<T> {
 
 export async function getRadarrMovies(): Promise<RadarrMovie[]> {
   return radarrFetch<RadarrMovie[]>('/movie');
+}
+
+/**
+ * Fetch download history and return a map of torrentHash → movieId.
+ * This is the most reliable way to link qBittorrent hashes to Radarr movies —
+ * the same approach Radarr itself uses internally.
+ */
+export async function getRadarrHistoryHashes(): Promise<Map<string, number>> {
+  interface HistoryRecord { movieId: number; downloadId?: string; eventType: string; }
+  interface HistoryPage  { records: HistoryRecord[] }
+
+  const map = new Map<string, number>();
+  try {
+    const page = await radarrFetch<HistoryPage>(
+      '/history?pageSize=5000&sortKey=date&sortDirection=descending'
+    );
+    for (const r of page.records ?? []) {
+      if (r.downloadId && r.movieId) {
+        map.set(r.downloadId.toLowerCase(), r.movieId);
+      }
+    }
+  } catch { /* history is best-effort — fall back to name matching */ }
+  return map;
 }
 
 export async function getRadarrStatus(): Promise<ServiceStatus> {

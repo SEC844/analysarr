@@ -1,5 +1,5 @@
 import type { QbitTorrent, ServiceStatus } from './types';
-import { buildServiceUrl } from './utils';
+import { buildServiceUrl, normalizeUrl } from './utils';
 import { loadConfig } from './config';
 
 const TIMEOUT_MS = 5000;
@@ -8,7 +8,7 @@ const TIMEOUT_MS = 5000;
 function getConfig() {
   const saved = loadConfig().services?.qbit ?? {};
   return {
-    url: saved.url?.trim() || buildServiceUrl(process.env.QBIT_URL ?? '', process.env.QBIT_PORT),
+    url: normalizeUrl(saved.url ?? '') || buildServiceUrl(process.env.QBIT_URL ?? '', process.env.QBIT_PORT),
     username: saved.username?.trim() || (process.env.QBIT_USERNAME ?? 'admin').trim(),
     password: saved.password?.trim() || (process.env.QBIT_PASSWORD ?? '').trim(),
   };
