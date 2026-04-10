@@ -15,6 +15,8 @@ Analysarr is a self-hosted, dark-mode-first web dashboard that gives you an inst
 - **Issues panel** — auto-detected problems: missing torrents, orphan torrents, duplicates, copies instead of hardlinks
 - **Settings** — live connection status per service with one-click test, masked API key display
 - **Inode-based hardlink detection** — compares filesystem inodes instead of paths, giving a reliable hardlink status regardless of path layout
+- **Media detail page** — click any poster to see all associated files (in `/media` and `/data`), active torrents with paths, cross-seed status, and a direct link to Radarr/Sonarr
+- **Cross Seed detection** via qBittorrent tags — no Cross Seed API version dependency
 - Auto-refresh every 60 seconds (configurable)
 - Poster images proxied server-side (no CORS, no key exposure)
 - Fully responsive — mobile, tablet, desktop
@@ -91,6 +93,8 @@ npm run dev
 | `CROSSSEED_URL` | No | — | Base URL of your Cross Seed instance |
 | `CROSSSEED_PORT` | No | `2468` | Cross Seed port override |
 | `CROSSSEED_API_KEY` | No | — | Cross Seed API key (`cross-seed api-key`) |
+| `NEXT_PUBLIC_RADARR_URL` | No | — | Browser-accessible Radarr URL for external links on detail pages |
+| `NEXT_PUBLIC_SONARR_URL` | No | — | Browser-accessible Sonarr URL for external links on detail pages |
 
 > **No `.env` file is required.** All values are injected via `docker-compose` environment blocks.
 
@@ -108,7 +112,9 @@ When the filesystem is not mounted (no volumes configured), Analysarr falls back
 
 ### What volumes should I mount on Unraid?
 
-Mount the Unraid user share(s) that contain your downloads and media library:
+Volume mounts are **required** for inode-based hardlink detection. Analysarr calls `fs.stat()` on the file paths reported by qBittorrent and Radarr/Sonarr — those paths must exist inside the Analysarr container.
+
+Mount the Unraid user share(s) read-only:
 
 ```yaml
 volumes:
@@ -118,7 +124,7 @@ volumes:
   - /mnt/user/media:/media:ro
 ```
 
-The paths inside the container (`/data`, `/media`) must match what qBittorrent and Radarr/Sonarr report as their file paths.
+The paths inside the container (`/data`, `/media`) must match what qBittorrent and Radarr/Sonarr report as their file paths. If volumes are not mounted, Analysarr automatically falls back to path-overlap comparison using `PATH_MAP_FROM` / `PATH_MAP_TO`.
 
 ### What is `PATH_MAP_FROM` / `PATH_MAP_TO`?
 
@@ -133,9 +139,11 @@ A qBit path of `/data/torrents/Movie.mkv` is translated to `/media/torrents/Movi
 
 If you mount the volumes (recommended), inode comparison is used automatically and these variables are not needed.
 
-### Why does Cross Seed show "HTTP 404"?
+### How does Cross Seed detection work?
 
-Cross Seed v6+ is required for the `/api/torrents` endpoint. If you are running an older version, either update Cross Seed or the integration will be disabled (the rest of the dashboard still works normally).
+Cross Seed detection no longer relies on the Cross Seed REST API. Instead, Analysarr reads the `tags` and `category` fields of each qBittorrent torrent and flags any torrent containing `cross-seed` as a cross-seed. This matches the default tag that Cross Seed sets when injecting a torrent into qBittorrent and works with any Cross Seed version.
+
+The **Settings** page still shows a live connection status for Cross Seed using the correct endpoints (`GET /api/ping` and `GET /api/status` with `X-Api-Key` header).
 
 ### Why are API keys not visible in Settings?
 

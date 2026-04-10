@@ -38,6 +38,20 @@ export async function getSonarrEpisodes(seriesId: number): Promise<SonarrEpisode
   return sonarrFetch<SonarrEpisode[]>(`/episode?seriesId=${seriesId}`);
 }
 
+export interface SonarrEpisodeFile {
+  id: number;
+  seriesId: number;
+  seasonNumber: number;
+  relativePath: string;
+  path: string;
+  size: number;
+  dateAdded: string;
+}
+
+export async function getSonarrEpisodeFiles(seriesId: number): Promise<SonarrEpisodeFile[]> {
+  return sonarrFetch<SonarrEpisodeFile[]>(`/episodeFile?seriesId=${seriesId}`);
+}
+
 export async function getSonarrStatus(): Promise<ServiceStatus> {
   if (!BASE_URL) {
     return { name: 'Sonarr', url: '', connected: false, error: 'SONARR_URL not set' };

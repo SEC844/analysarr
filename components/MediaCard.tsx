@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, AlertTriangle, Tv2, Film } from 'lucide-react';
 import { SeedBadge, HardlinkBadge, TypeBadge, CrossSeedBadge } from './StatusBadge';
@@ -48,8 +49,8 @@ export function MediaCard({ media }: { media: EnrichedMedia }) {
       transition={{ duration: 0.2 }}
       className="group relative flex flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 transition-colors hover:border-zinc-600"
     >
-      {/* Poster */}
-      <div className="relative aspect-[2/3] w-full overflow-hidden bg-zinc-800">
+      {/* Poster (clickable → detail page) */}
+      <Link href={`/media/${media.type}/${media.id}`} className="relative aspect-[2/3] w-full overflow-hidden bg-zinc-800 block">
         {media.posterUrl && !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -100,7 +101,7 @@ export function MediaCard({ media }: { media: EnrichedMedia }) {
         <div className="absolute top-2 left-2 rounded-md bg-zinc-950/70 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
           {media.year}
         </div>
-      </div>
+      </Link>
 
       {/* Card body */}
       <div className="flex flex-1 flex-col gap-2 p-3">

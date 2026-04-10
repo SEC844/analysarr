@@ -4,7 +4,6 @@ import type {
   RadarrMovie,
   SonarrSeries,
   QbitTorrent,
-  CrossSeedTorrent,
   EnrichedMedia,
   IssueItem,
   DashboardStats,
@@ -19,7 +18,9 @@ export const SEEDING_STATES = new Set([
   'uploading', 'stalledUP', 'checkingUP', 'queuedUP', 'forcedUP',
 ]);
 
-const CROSSSEED_ACTIVE = new Set<CrossSeedTorrent['status']>(['SAVED', 'INJECTED']);
+// Cross Seed injects torrents into qBittorrent tagged with "cross-seed".
+// We detect them via qBit tags/category instead of the Cross Seed API.
+const CROSSSEED_TAG_RE = /cross-seed/i;
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -238,16 +239,16 @@ export function enrichMedia(
   movies: RadarrMovie[],
   series: SonarrSeries[],
   torrents: QbitTorrent[],
-  crossSeedTorrents: CrossSeedTorrent[] = [],
 ): { media: EnrichedMedia[]; issues: IssueItem[]; stats: DashboardStats } {
   const issues: IssueItem[] = [];
   const enriched: EnrichedMedia[] = [];
   const matchedHashes = new Set<string>();
 
+  // Detect cross-seeded torrents from qBit tags/category (set by Cross Seed on inject)
   const crossSeedHashes = new Set(
-    crossSeedTorrents
-      .filter(cs => CROSSSEED_ACTIVE.has(cs.status))
-      .map(cs => cs.infoHash.toLowerCase()),
+    torrents
+      .filter(t => CROSSSEED_TAG_RE.test(t.tags ?? '') || CROSSSEED_TAG_RE.test(t.category ?? ''))
+      .map(t => t.hash.toLowerCase()),
   );
 
   // Only process media that has at least one file — skip "wanted but not downloaded" entries
@@ -388,7 +389,7 @@ export function enrichMedia(
   const hardlinkedCount  = enriched.filter(m => m.hardlinkStatus === 'hardlinked').length;
   const missingHardlinks = enriched.filter(m => m.filePaths.length > 0 && m.hardlinkStatus === 'not_hardlinked').length;
   const totalEpisodes    = downloadedSeries.reduce((a, s) => a + (s.statistics?.episodeFileCount ?? 0), 0);
-  const totalCrossSeeds  = crossSeedTorrents.filter(cs => CROSSSEED_ACTIVE.has(cs.status)).length;
+  const totalCrossSeeds  = crossSeedHashes.size;
 
   return {
     media: enriched,

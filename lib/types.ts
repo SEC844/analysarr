@@ -23,6 +23,7 @@ export interface SonarrSeries {
   id: number;
   title: string;
   year: number;
+  titleSlug: string;
   episodeFileCount: number;
   episodeCount: number;
   images: Array<{ coverType: string; remoteUrl: string; url: string }>;

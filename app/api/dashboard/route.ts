@@ -2,30 +2,26 @@ import { NextResponse } from 'next/server';
 import { getRadarrMovies } from '@/lib/radarr';
 import { getSonarrSeries } from '@/lib/sonarr';
 import { getQbitTorrents } from '@/lib/qbit';
-import { getCrossSeedTorrents } from '@/lib/crossseed';
 import { enrichMedia } from '@/lib/enrich';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const [movies, series, torrents, crossSeeds] = await Promise.allSettled([
+    const [movies, series, torrents] = await Promise.allSettled([
       getRadarrMovies(),
       getSonarrSeries(),
       getQbitTorrents(),
-      getCrossSeedTorrents(),
     ]);
 
-    const resolvedMovies = movies.status === 'fulfilled' ? movies.value : [];
-    const resolvedSeries = series.status === 'fulfilled' ? series.value : [];
+    const resolvedMovies   = movies.status   === 'fulfilled' ? movies.value   : [];
+    const resolvedSeries   = series.status   === 'fulfilled' ? series.value   : [];
     const resolvedTorrents = torrents.status === 'fulfilled' ? torrents.value : [];
-    const resolvedCrossSeeds = crossSeeds.status === 'fulfilled' ? crossSeeds.value : [];
 
     const { media, issues, stats } = enrichMedia(
       resolvedMovies,
       resolvedSeries,
       resolvedTorrents,
-      resolvedCrossSeeds
     );
 
     return NextResponse.json({
@@ -33,10 +29,9 @@ export async function GET() {
       issues,
       stats,
       errors: {
-        radarr: movies.status === 'rejected' ? movies.reason?.message : null,
-        sonarr: series.status === 'rejected' ? series.reason?.message : null,
-        qbit: torrents.status === 'rejected' ? torrents.reason?.message : null,
-        crossseed: crossSeeds.status === 'rejected' ? crossSeeds.reason?.message : null,
+        radarr:  movies.status   === 'rejected' ? movies.reason?.message   : null,
+        sonarr:  series.status   === 'rejected' ? series.reason?.message   : null,
+        qbit:    torrents.status === 'rejected' ? torrents.reason?.message : null,
       },
     });
   } catch (err) {
