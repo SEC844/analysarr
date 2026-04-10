@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Folder, ChevronRight, ChevronUp, Plus, Trash2, ArrowRight, Check,
+  Folder, ChevronRight, ChevronUp, Plus, Trash2, ArrowRight, Check, Wand2, AlertCircle,
 } from 'lucide-react';
 
 interface PathMapping {
@@ -20,6 +20,12 @@ interface BrowseResult {
   dirs: string[];
   parent: string | null;
   error?: string;
+}
+
+interface SuggestResult {
+  suggestions: Array<{ from: string; to: string; count: number }>;
+  alreadyAccessible: number;
+  sampledMovies: string[];
 }
 
 // ── Single directory browser ──────────────────────────────────────────────────
@@ -46,20 +52,13 @@ function FileBrowser({
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Current path */}
       <div className="rounded-t-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300 truncate">
         {currentPath}
       </div>
-
-      {/* Directory listing */}
       <div className="min-h-[180px] max-h-[220px] overflow-y-auto rounded-b-lg border border-t-0 border-zinc-700 bg-zinc-950">
-        {isLoading && (
-          <p className="p-3 text-xs text-zinc-500">Loading…</p>
-        )}
+        {isLoading && <p className="p-3 text-xs text-zinc-500">Loading…</p>}
         {(isError || data?.error) && (
-          <p className="p-3 text-xs text-red-400">
-            {data?.error ?? 'Cannot read directory'}
-          </p>
+          <p className="p-3 text-xs text-red-400">{data?.error ?? 'Cannot read directory'}</p>
         )}
         {!isLoading && !isError && !data?.error && (
           <>
@@ -68,21 +67,16 @@ function FileBrowser({
                 onClick={() => setCurrentPath(data.parent!)}
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 transition-colors"
               >
-                <ChevronUp className="h-3.5 w-3.5 shrink-0" />
-                ..
+                <ChevronUp className="h-3.5 w-3.5 shrink-0" />..
               </button>
             )}
-            {data?.dirs.length === 0 && (
-              <p className="p-3 text-xs text-zinc-600">No subdirectories</p>
-            )}
+            {data?.dirs.length === 0 && <p className="p-3 text-xs text-zinc-600">No subdirectories</p>}
             {data?.dirs.map(dir => (
               <button
                 key={dir}
                 onClick={() => setCurrentPath(dir)}
                 className={`flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors ${
-                  selected === dir
-                    ? 'bg-blue-950/60 text-blue-300'
-                    : 'text-zinc-300 hover:bg-zinc-800'
+                  selected === dir ? 'bg-blue-950/60 text-blue-300' : 'text-zinc-300 hover:bg-zinc-800'
                 }`}
               >
                 <Folder className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
@@ -93,8 +87,6 @@ function FileBrowser({
           </>
         )}
       </div>
-
-      {/* Select current directory button */}
       <button
         onClick={() => onSelect(currentPath)}
         className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
@@ -117,10 +109,18 @@ export function PathMapper() {
   const [adding, setAdding] = useState(false);
   const [fromPath, setFromPath] = useState('');
   const [toPath, setToPath] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const { data: config, isLoading } = useQuery<AppConfig>({
     queryKey: ['config-mappings'],
     queryFn: () => fetch('/api/config/mappings').then(r => r.json()),
+  });
+
+  const { data: suggestions, isFetching: detectingPaths, refetch: runDetect } = useQuery<SuggestResult>({
+    queryKey: ['suggest-mapping'],
+    queryFn: () => fetch('/api/debug/suggest-mapping').then(r => r.json()),
+    enabled: false, // manual trigger only
+    retry: false,
   });
 
   const saveMutation = useMutation({
@@ -130,28 +130,44 @@ export function PathMapper() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pathMappings: mappings }),
       }).then(r => r.json()),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['config-mappings'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['config-mappings'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
   });
 
   const mappings = config?.pathMappings ?? [];
 
-  const addMapping = () => {
-    if (!fromPath || !toPath) return;
-    saveMutation.mutate([...mappings, { from: fromPath, to: toPath }]);
-    setAdding(false);
-    setFromPath('');
-    setToPath('');
+  const addMapping = (m?: PathMapping) => {
+    const newMapping = m ?? (fromPath && toPath ? { from: fromPath, to: toPath } : null);
+    if (!newMapping) return;
+    saveMutation.mutate([...mappings, newMapping]);
+    if (!m) {
+      setAdding(false);
+      setFromPath('');
+      setToPath('');
+    }
   };
 
-  const removeMapping = (index: number) => {
-    saveMutation.mutate(mappings.filter((_, i) => i !== index));
+  const removeMapping = (index: number) => saveMutation.mutate(mappings.filter((_, i) => i !== index));
+
+  const cancelAdding = () => { setAdding(false); setFromPath(''); setToPath(''); };
+
+  const handleAutoDetect = () => {
+    setShowSuggestions(true);
+    runDetect();
   };
 
-  const cancelAdding = () => {
-    setAdding(false);
-    setFromPath('');
-    setToPath('');
+  const applySuggestion = (s: PathMapping) => {
+    // Don't add if already configured
+    if (mappings.some(m => m.from === s.from && m.to === s.to)) return;
+    addMapping(s);
   };
+
+  // Suggestions not already in configured mappings
+  const newSuggestions = (suggestions?.suggestions ?? []).filter(
+    s => !mappings.some(m => m.from === s.from && m.to === s.to)
+  );
 
   return (
     <section className="space-y-3">
@@ -163,16 +179,88 @@ export function PathMapper() {
             Required when the paths inside and outside the container differ.
           </p>
         </div>
-        {!adding && (
+        <div className="flex shrink-0 items-center gap-2">
           <button
-            onClick={() => setAdding(true)}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors"
+            onClick={handleAutoDetect}
+            disabled={detectingPaths}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+            title="Auto-detect the correct mapping from Radarr/Sonarr paths"
           >
-            <Plus className="h-3.5 w-3.5" />
-            Add
+            <Wand2 className={`h-3.5 w-3.5 ${detectingPaths ? 'animate-pulse' : ''}`} />
+            Auto-detect
           </button>
-        )}
+          {!adding && (
+            <button
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Auto-detect results */}
+      {showSuggestions && !detectingPaths && suggestions && (
+        <div className="rounded-xl border border-zinc-700 bg-zinc-900 p-4 space-y-3">
+          <p className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+            <Wand2 className="h-3.5 w-3.5 text-zinc-500" />
+            Auto-detect results
+          </p>
+
+          {suggestions.alreadyAccessible > 0 && newSuggestions.length === 0 && (
+            <div className="flex items-center gap-2 rounded-lg bg-green-950/40 border border-green-900/60 px-3 py-2 text-xs text-green-400">
+              <Check className="h-3.5 w-3.5 shrink-0" />
+              {suggestions.alreadyAccessible} paths are already accessible without any mapping.
+              If hardlinks still aren&apos;t detected, the files may not actually be hardlinked (different inodes).
+            </div>
+          )}
+
+          {newSuggestions.length === 0 && suggestions.alreadyAccessible === 0 && (
+            <div className="flex items-center gap-2 rounded-lg bg-amber-950/40 border border-amber-900/60 px-3 py-2 text-xs text-amber-400">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              Could not auto-detect a mapping. Make sure <code className="bg-zinc-800 px-1 rounded">/data</code> and{' '}
+              <code className="bg-zinc-800 px-1 rounded">/media</code> volumes are mounted.
+            </div>
+          )}
+
+          {newSuggestions.map(s => (
+            <div key={`${s.from}→${s.to}`} className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800/60 px-3 py-2 text-xs">
+              <code className="text-zinc-300 bg-zinc-900 px-2 py-0.5 rounded font-mono">{s.from}</code>
+              <ArrowRight className="h-3.5 w-3.5 text-zinc-600 shrink-0" />
+              <code className="text-zinc-300 bg-zinc-900 px-2 py-0.5 rounded font-mono">{s.to}</code>
+              <span className="text-zinc-600 ml-1">({s.count} path{s.count > 1 ? 's' : ''})</span>
+              <button
+                onClick={() => applySuggestion(s)}
+                className="ml-auto rounded-lg bg-blue-600 px-3 py-1 text-white hover:bg-blue-500 transition-colors text-xs"
+              >
+                Apply
+              </button>
+            </div>
+          ))}
+
+          {newSuggestions.length > 0 && (
+            <p className="text-[10px] text-zinc-600">
+              Mapping verified: Analysarr found these files at the translated paths on disk.
+            </p>
+          )}
+
+          {/* Sample paths for debugging */}
+          {suggestions.sampledMovies.length > 0 && (
+            <details className="text-xs">
+              <summary className="text-zinc-600 cursor-pointer hover:text-zinc-400">
+                Sampled Radarr paths ({suggestions.sampledMovies.length})
+              </summary>
+              <div className="mt-2 space-y-1">
+                {suggestions.sampledMovies.slice(0, 5).map(p => (
+                  <code key={p} className="block text-zinc-500 font-mono text-[10px]">{p}</code>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {/* Existing mappings */}
       {isLoading ? (
@@ -184,13 +272,9 @@ export function PathMapper() {
               key={i}
               className="flex items-center gap-3 border-b border-zinc-800/60 px-4 py-3 last:border-0"
             >
-              <code className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300">
-                {m.from}
-              </code>
+              <code className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300">{m.from}</code>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-              <code className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300">
-                {m.to}
-              </code>
+              <code className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300">{m.to}</code>
               <button
                 onClick={() => removeMapping(i)}
                 className="ml-auto text-zinc-600 transition-colors hover:text-red-400"
@@ -202,10 +286,10 @@ export function PathMapper() {
           ))}
         </div>
       ) : (
-        !adding && (
+        !adding && !showSuggestions && (
           <p className="text-xs text-zinc-600">
-            No path mappings configured. Add one if hardlink detection shows&nbsp;
-            <span className="text-zinc-400">unknown</span> for all media.
+            No path mappings configured. Click <strong className="text-zinc-400">Auto-detect</strong> to find
+            the correct mapping automatically, or <strong className="text-zinc-400">Add</strong> to configure manually.
           </p>
         )
       )}
@@ -221,7 +305,6 @@ export function PathMapper() {
             in this container (e.g.{' '}
             <code className="rounded bg-zinc-800 px-1 font-mono">/media/tv</code>) on the right.
           </p>
-
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <p className="text-xs font-medium text-zinc-400">
@@ -236,7 +319,6 @@ export function PathMapper() {
               <FileBrowser root="/media" selected={toPath} onSelect={setToPath} />
             </div>
           </div>
-
           {fromPath && toPath && (
             <div className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-xs">
               <code className="text-zinc-300">{fromPath}</code>
@@ -244,10 +326,9 @@ export function PathMapper() {
               <code className="text-zinc-300">{toPath}</code>
             </div>
           )}
-
           <div className="flex items-center gap-2">
             <button
-              onClick={addMapping}
+              onClick={() => addMapping()}
               disabled={!fromPath || !toPath || saveMutation.isPending}
               className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -266,7 +347,7 @@ export function PathMapper() {
       <p className="text-xs text-zinc-600">
         Mappings are saved to{' '}
         <code className="rounded bg-zinc-800 px-1 font-mono">/config/mappings.json</code>{' '}
-        inside the container and persist across restarts when you mount a{' '}
+        and persist across restarts when you mount a{' '}
         <code className="rounded bg-zinc-800 px-1 font-mono">/config</code> volume.
       </p>
     </section>
