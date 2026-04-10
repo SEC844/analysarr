@@ -94,6 +94,15 @@ export default function SeriesDetailPage() {
             {(media.episodeSeedingCount ?? 0) > 0 && (
               <span><span className="text-zinc-500">Torrents seeding :</span> {media.episodeSeedingCount}</span>
             )}
+            {media.torrents.length > 0 && (
+              <span>
+                <span className="text-zinc-500">Ratio global :</span>{' '}
+                {media.globalRatio != null ? media.globalRatio.toFixed(2) : '∞'}
+              </span>
+            )}
+            {media.totalUploaded > 0 && (
+              <span><span className="text-zinc-500">↑ Total :</span> {formatBytes(media.totalUploaded)}</span>
+            )}
           </div>
           {SONARR_URL && data.sonarrSeries && (
             <a

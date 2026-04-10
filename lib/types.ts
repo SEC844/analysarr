@@ -77,6 +77,10 @@ export interface QbitTorrent {
   progress: number;
   dlspeed: number;
   upspeed: number;
+  /** Total bytes uploaded for this torrent (all time) */
+  uploaded: number;
+  /** Total bytes actually downloaded from peers */
+  downloaded: number;
   ratio: number;
   state: TorrentState;
   tracker: string;
@@ -102,11 +106,9 @@ export type CrossSeedStatus =
   | 'UNKNOWN';
 
 export interface CrossSeedTorrent {
-  /** Info hash of the cross-seeded torrent (matches qBit hash) */
   infoHash: string;
   name: string;
   status: CrossSeedStatus;
-  /** Name of the source torrent that triggered this cross-seed */
   decision?: string;
 }
 
@@ -128,9 +130,17 @@ export interface EnrichedMedia {
   filePaths: string[];
   episodeSeedingCount?: number; // series only
   hasDuplicates: boolean;
-  /** Number of cross-seeds associated with this media entry */
+  /** Cross-seeds = legitimate re-seeds of the same version via Cross Seed */
   crossSeedCount: number;
-  size: number; // bytes
+  /** Different-version torrents that don't match the *arr file (not cross-seeds) */
+  duplicateCount: number;
+  size: number; // bytes (arr file size)
+  /** Sum of uploaded bytes across all matched torrents */
+  totalUploaded: number;
+  /** Sum of downloaded bytes across all matched torrents */
+  totalDownloaded: number;
+  /** Aggregate ratio: totalUploaded / totalDownloaded. null = nothing downloaded (pure seed). */
+  globalRatio: number | null;
 }
 
 export interface IssueItem {

@@ -6,24 +6,10 @@ services:
     container_name: analysarr
     ports:
       - "3000:3000"
-    environment:
-      - RADARR_URL=http://radarr:7878
-      - RADARR_API_KEY=your_radarr_api_key
-      - SONARR_URL=http://sonarr:8989
-      - SONARR_API_KEY=your_sonarr_api_key
-      - QBIT_URL=http://qbittorrent:8080
-      - QBIT_USERNAME=admin
-      - QBIT_PASSWORD=your_password
-      # Optional
-      - REFRESH_INTERVAL=60
-      - CROSSSEED_URL=http://cross-seed:2468
-      - CROSSSEED_API_KEY=your_crossseed_api_key
-
     volumes:
-      - /mnt/user/data:/data:ro          # qBittorrent download root
-      - /mnt/user/media:/media:ro        # Radarr / Sonarr media root
-      - /mnt/user/appdata/analysarr:/config  # persist path mappings configured in the UI
-
+      - /mnt/user/data:/data:ro              # qBittorrent download root (read-only)
+      - /mnt/user/media:/media:ro            # Radarr / Sonarr media root (read-only)
+      - /mnt/user/appdata/analysarr:/config  # Persistent config (credentials, path mappings)
     restart: unless-stopped
     networks:
       - media

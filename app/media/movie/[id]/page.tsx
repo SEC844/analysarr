@@ -92,7 +92,15 @@ export default function MovieDetailPage() {
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-zinc-400">
             {media.size > 0 && <span><span className="text-zinc-500">Taille :</span> {formatBytes(media.size)}</span>}
-            {media.torrents[0] && <span><span className="text-zinc-500">Ratio :</span> {media.torrents[0].ratio.toFixed(2)}</span>}
+            {media.torrents.length > 0 && (
+              <span>
+                <span className="text-zinc-500">Ratio global :</span>{' '}
+                {media.globalRatio != null ? media.globalRatio.toFixed(2) : '∞'}
+              </span>
+            )}
+            {media.totalUploaded > 0 && (
+              <span><span className="text-zinc-500">↑ Total :</span> {formatBytes(media.totalUploaded)}</span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             {RADARR_URL && data.radarrMovie && (

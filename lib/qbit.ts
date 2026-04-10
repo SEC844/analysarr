@@ -1,35 +1,35 @@
 import type { QbitTorrent, ServiceStatus } from './types';
 import { buildServiceUrl } from './utils';
+import { loadConfig } from './config';
 
-// QBIT_PORT is optional — overrides the port in QBIT_URL if set
-const BASE_URL = buildServiceUrl(
-  process.env.QBIT_URL ?? '',
-  process.env.QBIT_PORT
-);
-const USERNAME = (process.env.QBIT_USERNAME ?? 'admin').trim();
-const PASSWORD = (process.env.QBIT_PASSWORD ?? '').trim();
 const TIMEOUT_MS = 5000;
 
-let _cookie: string | null = null;
+/** Read qBit config at call time — prefers UI config, falls back to env vars. */
+function getConfig() {
+  const saved = loadConfig().services?.qbit ?? {};
+  return {
+    url: saved.url?.trim() || buildServiceUrl(process.env.QBIT_URL ?? '', process.env.QBIT_PORT),
+    username: saved.username?.trim() || (process.env.QBIT_USERNAME ?? 'admin').trim(),
+    password: saved.password?.trim() || (process.env.QBIT_PASSWORD ?? '').trim(),
+  };
+}
 
-async function qbitLogin(): Promise<string> {
+// Session keyed by url+username so config changes auto-invalidate
+interface Session { cookie: string; url: string; username: string }
+let _session: Session | null = null;
+
+async function qbitLogin(cfg: ReturnType<typeof getConfig>): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
   try {
-    const body = new URLSearchParams({ username: USERNAME, password: PASSWORD });
-    const res = await fetch(`${BASE_URL}/api/v2/auth/login`, {
+    const body = new URLSearchParams({ username: cfg.username, password: cfg.password });
+    const res = await fetch(`${cfg.url}/api/v2/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-      signal: controller.signal,
+      body, signal: controller.signal,
     });
-
     const text = await res.text();
-    if (text !== 'Ok.') {
-      throw new Error('qBittorrent login failed — check credentials');
-    }
-
+    if (text !== 'Ok.') throw new Error('qBittorrent login failed — check credentials');
     const cookie = res.headers.get('set-cookie');
     if (!cookie) throw new Error('qBittorrent login: no session cookie returned');
     return cookie.split(';')[0];
@@ -39,40 +39,42 @@ async function qbitLogin(): Promise<string> {
 }
 
 async function qbitFetch<T>(path: string): Promise<T> {
-  if (!_cookie) {
-    _cookie = await qbitLogin();
+  const cfg = getConfig();
+
+  // Invalidate session if URL or username changed
+  if (_session && (_session.url !== cfg.url || _session.username !== cfg.username)) {
+    _session = null;
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  if (!_session) {
+    const cookie = await qbitLogin(cfg);
+    _session = { cookie, url: cfg.url, username: cfg.username };
+  }
 
-  try {
-    const res = await fetch(`${BASE_URL}/api/v2${path}`, {
-      headers: { Cookie: _cookie },
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-
-    // Session expired — retry once
-    if (res.status === 403) {
-      _cookie = await qbitLogin();
-      const retry = await fetch(`${BASE_URL}/api/v2${path}`, {
-        headers: { Cookie: _cookie },
-        signal: controller.signal,
-        cache: 'no-store',
+  const doFetch = async (cookie: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      return await fetch(`${cfg.url}/api/v2${path}`, {
+        headers: { Cookie: cookie }, signal: controller.signal, cache: 'no-store',
       });
-      if (!retry.ok) throw new Error(`qBittorrent: ${retry.status}`);
-      return retry.json() as Promise<T>;
+    } finally {
+      clearTimeout(timer);
     }
+  };
 
-    if (!res.ok) {
-      throw new Error(`qBittorrent responded with ${res.status}`);
-    }
+  let res = await doFetch(_session.cookie);
 
-    return res.json() as Promise<T>;
-  } finally {
-    clearTimeout(timer);
+  // Session expired — re-login once
+  if (res.status === 403) {
+    _session = null;
+    const newCookie = await qbitLogin(cfg);
+    _session = { cookie: newCookie, url: cfg.url, username: cfg.username };
+    res = await doFetch(newCookie);
   }
+
+  if (!res.ok) throw new Error(`qBittorrent responded with ${res.status}`);
+  return res.json() as Promise<T>;
 }
 
 export async function getQbitTorrents(): Promise<QbitTorrent[]> {
@@ -80,26 +82,13 @@ export async function getQbitTorrents(): Promise<QbitTorrent[]> {
 }
 
 export async function getQbitStatus(): Promise<ServiceStatus> {
-  if (!BASE_URL) {
-    return { name: 'qBittorrent', url: BASE_URL, connected: false, error: 'URL not configured' };
-  }
-
+  const { url } = getConfig();
+  if (!url) return { name: 'qBittorrent', url: '', connected: false, error: 'URL not configured' };
   try {
-    // /app/buildInfo returns proper JSON (unlike /app/version which returns plain text)
     const data = await qbitFetch<{ version: string }>('/app/buildInfo');
-    return {
-      name: 'qBittorrent',
-      url: BASE_URL,
-      connected: true,
-      version: data.version,
-    };
+    return { name: 'qBittorrent', url, connected: true, version: data.version };
   } catch (err) {
-    _cookie = null;
-    return {
-      name: 'qBittorrent',
-      url: BASE_URL,
-      connected: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
-    };
+    _session = null;
+    return { name: 'qBittorrent', url, connected: false, error: err instanceof Error ? err.message : 'Unknown error' };
   }
 }
