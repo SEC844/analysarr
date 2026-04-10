@@ -8,22 +8,16 @@ import { maskApiKey } from '@/lib/utils';
 import type { ServiceStatus } from '@/lib/types';
 
 interface StatusData {
-  radarr: ServiceStatus;
-  sonarr: ServiceStatus;
-  qbit: ServiceStatus;
+  radarr:    ServiceStatus;
+  sonarr:    ServiceStatus;
+  qbit:      ServiceStatus;
   crossseed: ServiceStatus;
+  config: {
+    pathMapFrom:     string;
+    pathMapTo:       string;
+    refreshInterval: string;
+  };
 }
-
-const ENV = {
-  radarrUrl: process.env.NEXT_PUBLIC_RADARR_URL,
-  sonarrUrl: process.env.NEXT_PUBLIC_SONARR_URL,
-  qbitUrl: process.env.NEXT_PUBLIC_QBIT_URL,
-  radarrKey: process.env.NEXT_PUBLIC_RADARR_API_KEY,
-  sonarrKey: process.env.NEXT_PUBLIC_SONARR_API_KEY,
-  refreshInterval: process.env.NEXT_PUBLIC_REFRESH_INTERVAL ?? '60',
-  pathMapFrom: process.env.NEXT_PUBLIC_PATH_MAP_FROM,
-  pathMapTo: process.env.NEXT_PUBLIC_PATH_MAP_TO,
-};
 
 export default function SettingsPage() {
   const [showKeys, setShowKeys] = useState(false);
@@ -32,6 +26,8 @@ export default function SettingsPage() {
     queryKey: ['status'],
     queryFn: () => fetch('/api/status').then((r) => r.json()),
   });
+
+  const cfg = data?.config;
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -58,17 +54,15 @@ export default function SettingsPage() {
 
         <div className="space-y-3">
           {isLoading ? (
-            Array.from({ length: 3 }).map((_, i) => (
+            Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-16 rounded-xl border border-zinc-800 bg-zinc-900 animate-pulse" />
             ))
           ) : (
             <>
-              {data?.radarr && <ConnectionStatus status={data.radarr} loading={isFetching} />}
-              {data?.sonarr && <ConnectionStatus status={data.sonarr} loading={isFetching} />}
-              {data?.qbit && <ConnectionStatus status={data.qbit} loading={isFetching} />}
-              {data?.crossseed && (
-                <ConnectionStatus status={data.crossseed} loading={isFetching} />
-              )}
+              {data?.radarr    && <ConnectionStatus status={data.radarr}    loading={isFetching} />}
+              {data?.sonarr    && <ConnectionStatus status={data.sonarr}    loading={isFetching} />}
+              {data?.qbit      && <ConnectionStatus status={data.qbit}      loading={isFetching} />}
+              {data?.crossseed && <ConnectionStatus status={data.crossseed} loading={isFetching} />}
             </>
           )}
         </div>
@@ -99,18 +93,18 @@ export default function SettingsPage() {
               </tr>
             </thead>
             <tbody>
-              {[
-                ['RADARR_URL', data?.radarr?.url],
-                ['RADARR_API_KEY', showKeys ? '(server-side only)' : maskApiKey('hidden')],
-                ['SONARR_URL', data?.sonarr?.url],
-                ['SONARR_API_KEY', showKeys ? '(server-side only)' : maskApiKey('hidden')],
-                ['QBIT_URL', data?.qbit?.url],
-                ['REFRESH_INTERVAL', `${ENV.refreshInterval}s`],
-                ['PATH_MAP_FROM', ENV.pathMapFrom ?? '(not set)'],
-                ['PATH_MAP_TO', ENV.pathMapTo ?? '(not set)'],
-                ['CROSSSEED_URL', data?.crossseed?.url || '(not set)'],
-                ['CROSSSEED_API_KEY', showKeys ? '(server-side only)' : maskApiKey('hidden')],
-              ].map(([key, value]) => (
+              {([
+                ['RADARR_URL',        data?.radarr?.url                                           ],
+                ['RADARR_API_KEY',    showKeys ? '(server-side only)' : maskApiKey('hidden')      ],
+                ['SONARR_URL',        data?.sonarr?.url                                           ],
+                ['SONARR_API_KEY',    showKeys ? '(server-side only)' : maskApiKey('hidden')      ],
+                ['QBIT_URL',          data?.qbit?.url                                             ],
+                ['REFRESH_INTERVAL',  cfg?.refreshInterval ? `${cfg.refreshInterval}s` : '60s'   ],
+                ['PATH_MAP_FROM',     cfg?.pathMapFrom || '(not set)'                             ],
+                ['PATH_MAP_TO',       cfg?.pathMapTo   || '(not set)'                             ],
+                ['CROSSSEED_URL',     data?.crossseed?.url || '(not set)'                        ],
+                ['CROSSSEED_API_KEY', showKeys ? '(server-side only)' : maskApiKey('hidden')     ],
+              ] as [string, string | undefined][]).map(([key, value]) => (
                 <tr key={key} className="border-b border-zinc-800/60 last:border-0">
                   <td className="px-4 py-3 font-mono text-xs text-zinc-400">{key}</td>
                   <td className="px-4 py-3 text-zinc-300 break-all">{value ?? '(not set)'}</td>
@@ -131,7 +125,13 @@ export default function SettingsPage() {
         <p>
           All settings are configured via environment variables in your{' '}
           <code className="rounded bg-zinc-800 px-1 py-0.5 text-xs font-mono text-zinc-300">docker-compose.yml</code>{' '}
-          file. No restart needed for connection tests — but a full restart is required when changing URLs or keys.
+          file. A full restart is required when changing URLs or keys.
+        </p>
+        <p className="text-xs text-zinc-500">
+          <strong className="text-zinc-400">Hardlink detection:</strong>{' '}
+          mount your <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono">/data</code> and{' '}
+          <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono">/media</code> volumes read-only
+          so Analysarr can compare inodes. PATH_MAP_FROM/TO is only needed as a fallback if volumes are not mounted.
         </p>
       </section>
     </div>

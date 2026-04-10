@@ -81,6 +81,9 @@ function collectInodes(dir: string, maxFiles = 20): Set<number> {
 /**
  * Compare inodes between arr file/directory paths and qBit torrent paths.
  *
+ * Uses statSync to distinguish files from directories — safeIno() alone
+ * is not enough because it returns non-null for both.
+ *
  * Returns:
  *   true  — hardlink confirmed (identical inode found)
  *   false — paths accessible but no matching inode (not hardlinked)
@@ -92,57 +95,44 @@ function checkInodes(rawArrPaths: string[], torrents: QbitTorrent[]): boolean | 
   for (const arrPath of rawArrPaths) {
     if (!arrPath) continue;
 
-    const arrIno = safeIno(arrPath);
+    let arrStat = null;
+    try { arrStat = statSync(arrPath); anyAccessible = true; } catch { continue; }
 
-    if (arrIno !== null) {
-      // arrPath is a regular file — compare inode directly with each torrent path
-      anyAccessible = true;
+    if (arrStat.isFile()) {
+      // ── Movie / single-file case: *arr reported a specific file ───────────
+      const arrIno = arrStat.ino;
       for (const t of torrents) {
         const qp = norm(t.content_path ?? t.save_path ?? '');
         if (!qp) continue;
+        let qStat = null;
+        try { qStat = statSync(qp); anyAccessible = true; } catch { continue; }
 
-        const qIno = safeIno(qp);
-        if (qIno !== null) {
-          anyAccessible = true;
-          if (qIno === arrIno) return true;
-        } else {
-          // qBit path might be a directory (multi-file torrent) — scan its files
-          try {
-            if (statSync(qp).isDirectory()) {
-              anyAccessible = true;
-              if (collectInodes(qp, 50).has(arrIno)) return true;
-            }
-          } catch { /* not accessible */ }
+        // qBit single-file torrent → direct inode comparison
+        if (qStat.isFile() && qStat.ino === arrIno) return true;
+        // qBit multi-file torrent (folder) → scan folder for matching inode
+        if (qStat.isDirectory() && collectInodes(qp, 50).has(arrIno)) return true;
+      }
+
+    } else if (arrStat.isDirectory()) {
+      // ── Series case: *arr reported the series root directory ──────────────
+      // Collect a sample of file inodes from the *arr directory
+      const arrInodes = collectInodes(arrPath, 20);
+      if (arrInodes.size === 0) continue;
+
+      for (const t of torrents) {
+        const qp = norm(t.content_path ?? t.save_path ?? '');
+        if (!qp) continue;
+        let qStat = null;
+        try { qStat = statSync(qp); anyAccessible = true; } catch { continue; }
+
+        // qBit single-file torrent → check if its inode is in the *arr dir
+        if (qStat.isFile() && arrInodes.has(qStat.ino)) return true;
+        // qBit multi-file torrent (season pack / series folder) → find common inodes
+        if (qStat.isDirectory()) {
+          const qInodes = collectInodes(qp, 20);
+          if (Array.from(qInodes).some(ino => arrInodes.has(ino))) return true;
         }
       }
-    } else {
-      // arrPath might be a directory (series: Sonarr series root)
-      try {
-        if (statSync(arrPath).isDirectory()) {
-          anyAccessible = true;
-          const arrInodes = collectInodes(arrPath, 5);
-          if (arrInodes.size > 0) {
-            for (const t of torrents) {
-              const qp = norm(t.content_path ?? t.save_path ?? '');
-              if (!qp) continue;
-
-              const qIno = safeIno(qp);
-              if (qIno !== null) {
-                anyAccessible = true;
-                if (arrInodes.has(qIno)) return true;
-              } else {
-                try {
-                  if (statSync(qp).isDirectory()) {
-                    anyAccessible = true;
-                    const qInodes = collectInodes(qp, 5);
-                    if (Array.from(qInodes).some(ino => arrInodes.has(ino))) return true;
-                  }
-                } catch { /* not accessible */ }
-              }
-            }
-          }
-        }
-      } catch { /* not accessible */ }
     }
   }
 

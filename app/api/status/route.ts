@@ -14,5 +14,16 @@ export async function GET() {
     getCrossSeedStatus(),
   ]);
 
-  return NextResponse.json({ radarr, sonarr, qbit, crossseed });
+  return NextResponse.json({
+    radarr,
+    sonarr,
+    qbit,
+    crossseed,
+    // Expose server-side path mapping config so the Settings page can display it
+    config: {
+      pathMapFrom: process.env.PATH_MAP_FROM ?? '',
+      pathMapTo:   process.env.PATH_MAP_TO   ?? '',
+      refreshInterval: process.env.REFRESH_INTERVAL ?? '60',
+    },
+  });
 }
