@@ -27,6 +27,12 @@ export function formatEta(seconds: number): string {
   return `${s}s`;
 }
 
+/** Matches cross-seed tags/categories in any common variant: cross-seed, crossseed, cross_seed */
+export const CROSSSEED_RE = /cross[-_]?seed/i;
+export function isCrossSeed(tags: string, category: string): boolean {
+  return CROSSSEED_RE.test(tags) || CROSSSEED_RE.test(category);
+}
+
 export function maskApiKey(key: string | undefined): string {
   if (!key) return '(not set)';
   if (key.length <= 8) return '••••••••';

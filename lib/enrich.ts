@@ -17,9 +17,9 @@ export const SEEDING_STATES = new Set([
   'uploading', 'stalledUP', 'checkingUP', 'queuedUP', 'forcedUP',
 ]);
 
-// Cross Seed injects torrents into qBittorrent tagged with "cross-seed".
-// We detect them via qBit tags/category instead of the Cross Seed API.
-const CROSSSEED_TAG_RE = /cross-seed/i;
+// Cross Seed injects torrents into qBittorrent tagged with "cross-seed" (default)
+// but users may configure "crossseed" or "cross_seed" — match all variants.
+const CROSSSEED_TAG_RE = /cross[-_]?seed/i;
 
 // Tolerance for size comparison: two torrents/files within 2% = same version
 const SIZE_TOLERANCE = 0.02;

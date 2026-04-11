@@ -5,6 +5,7 @@ import { ArrowDownUp, Search } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { TorrentRow, TorrentRowSkeleton } from '@/components/TorrentRow';
 import { LinkTorrentModal } from '@/components/LinkTorrentModal';
+import { isCrossSeed } from '@/lib/utils';
 import type { QbitTorrent, EnrichedMedia, DashboardStats } from '@/lib/types';
 
 const REFRESH_MS = parseInt(process.env.NEXT_PUBLIC_REFRESH_INTERVAL ?? '60', 10) * 1000;
@@ -39,10 +40,7 @@ export default function TorrentsPage() {
       }
     }
     for (const t of torrents) {
-      if (
-        (typeof t.tags === 'string' && t.tags.toLowerCase().includes('cross-seed')) ||
-        (typeof t.category === 'string' && t.category.toLowerCase().includes('cross-seed'))
-      ) {
+      if (isCrossSeed(t.tags ?? '', t.category ?? '')) {
         crossSeedHashes.add(t.hash);
       }
     }
