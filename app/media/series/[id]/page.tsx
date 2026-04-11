@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Tv2, ExternalLink, HardDrive, Shuffle, Upload, AlertTriangle } from 'lucide-react';
 import { SeedBadge, HardlinkBadge, TypeBadge, CrossSeedBadge } from '@/components/StatusBadge';
-import { formatBytes, formatSpeed, formatEta, cn } from '@/lib/utils';
+import { formatBytes, formatSpeed, formatEta, cn, isCrossSeed } from '@/lib/utils';
 import type { EnrichedMedia, SonarrSeries } from '@/lib/types';
 import type { SonarrEpisodeFile } from '@/lib/sonarr';
 
@@ -197,7 +197,7 @@ export default function SeriesDetailPage() {
             {media.torrents.filter(t => {
               const tags = (t.tags ?? '').toLowerCase();
               const cat  = (t.category ?? '').toLowerCase();
-              return tags.includes('cross-seed') || cat.includes('cross-seed');
+              return isCrossSeed(tags, cat);
             }).map(t => (
               <div key={t.hash} className="rounded-lg border border-cyan-200 dark:border-cyan-900/60 bg-cyan-50 dark:bg-cyan-950/20 px-3 py-2 text-xs">
                 <div className="flex items-center justify-between gap-2">
