@@ -91,8 +91,8 @@ export function MediaCard({ media }: { media: EnrichedMedia }) {
 
         {/* Corner badges */}
         {media.hasDuplicates && (
-          <div className="absolute top-1.5 right-1.5 rounded-full bg-amber-900/80 p-0.5">
-            <AlertTriangle className="h-2.5 w-2.5 text-amber-400" />
+          <div className="absolute top-1.5 right-1.5 rounded-full bg-amber-500/90 p-0.5 shadow">
+            <AlertTriangle className="h-2.5 w-2.5 text-white" />
           </div>
         )}
         <div className="absolute top-1.5 left-1.5 rounded bg-black/60 px-1 py-0.5 text-[9px] font-medium text-zinc-300 backdrop-blur-sm">
@@ -101,7 +101,7 @@ export function MediaCard({ media }: { media: EnrichedMedia }) {
       </Link>
 
       {/* Card body — compact */}
-      <div className="flex flex-col gap-1.5 p-2">
+      <div className="flex flex-col gap-1 p-2">
         <Link href={`/media/${media.type}/${media.id}`}>
           <h3 className="text-[11px] font-semibold leading-tight line-clamp-2 text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
             {media.title}
@@ -114,6 +114,12 @@ export function MediaCard({ media }: { media: EnrichedMedia }) {
             <HardlinkBadge status={media.hardlinkStatus} compact />
           )}
           <CrossSeedBadge count={media.crossSeedCount} compact />
+          {media.hasDuplicates && (
+            <span className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[9px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-400">
+              <AlertTriangle className="h-2 w-2" />
+              {media.duplicateCount} dup
+            </span>
+          )}
         </div>
       </div>
     </motion.div>

@@ -2,25 +2,26 @@
 
 > Real-time dashboard for your \*arr media stack — Radarr · Sonarr · qBittorrent
 
-![Screenshot placeholder](docs/screenshot.png)
-
-Analysarr is a self-hosted, dark-mode-first web dashboard that gives you an instant overview of your entire media library: what is seeding, what is hardlinked, and what needs attention.
+Analysarr is a self-hosted web dashboard that gives you an instant overview of your entire media library: what is seeding, what is hardlinked, and what needs attention. Supports dark and light themes.
 
 ---
 
 ## Features
 
-- **Dashboard** — stat cards (movies, series, episodes, seeding count, hardlinks, total seeding size) + full media grid with poster images. Only downloaded media is shown — wanted/missing items are excluded.
-- **Torrent list** — all active qBittorrent torrents cross-referenced with Radarr/Sonarr, color-coded by state. ETA shows `∞` for seeding torrents.
-- **Issues panel** — auto-detected problems: missing torrents, orphan torrents, duplicates, copies instead of hardlinks
-- **Settings** — live connection status per service with one-click test, masked API key display
-- **Inode-based hardlink detection** — compares filesystem inodes instead of paths, giving a reliable hardlink status regardless of path layout
-- **Path mapper UI** — interactive file browser in Settings to configure path translations, no env vars required
-- **Media detail page** — click any poster to see all associated files (in `/media` and `/data`), active torrents with paths, cross-seed status, and a direct link to Radarr/Sonarr
-- **Cross Seed detection** via qBittorrent tags — no Cross Seed API version dependency
-- Auto-refresh every 60 seconds (configurable)
-- Poster images proxied server-side (no CORS, no key exposure)
-- Fully responsive — mobile, tablet, desktop
+- **Dashboard** — stat cards + full media grid with poster art. Only downloaded media is shown — wanted/missing items are excluded.
+- **Dark / Light theme** — toggle in the navbar, preference saved across sessions.
+- **Torrent matching via Radarr/Sonarr history API** — uses the download hash directly, giving near-perfect accuracy. Falls back to path overlap then fuzzy name matching.
+- **Duplicate detection** — flags non-cross-seed torrents that differ from the \*arr file by more than 2% in size. Cross-seed re-seeds are explicitly excluded.
+- **Hardlink detection** — compares filesystem inodes (`fs.statSync({ bigint: true })`), immune to BigInt precision loss. Only canonical-version torrents are checked.
+- **Cross Seed detection** — reads qBittorrent `tags`/`category` fields, no Cross Seed API version dependency.
+- **Issues panel** — auto-detected problems: missing torrents, orphan torrents, version duplicates, copies instead of hardlinks.
+- **Manual torrent linking** — from the Torrents page, link any unmatched torrent to a specific movie or series.
+- **Media detail pages** — click any poster to see all associated files, active torrents with paths, cross-seed status, and a direct link to Radarr/Sonarr.
+- **Settings UI** — configure all service connections (URL + credentials) directly in the browser. Test connection before saving. No env vars required.
+- **Path mapper** — interactive file browser to configure path translations between container and host.
+- Auto-refresh every 60 s (configurable).
+- Poster images proxied server-side — no CORS issues, credentials never exposed to the browser.
+- Fully responsive — mobile, tablet, desktop.
 
 ---
 
@@ -28,39 +29,103 @@ Analysarr is a self-hosted, dark-mode-first web dashboard that gives you an inst
 
 ```yaml
 # docker-compose.yml
-version: "3.8"
 services:
   analysarr:
     image: ghcr.io/SEC844/analysarr:latest
-    container_name: analysarr
     ports:
       - "3000:3000"
-    environment:
-      - RADARR_URL=http://radarr:7878
-      - RADARR_API_KEY=your_radarr_api_key
-      - SONARR_URL=http://sonarr:8989
-      - SONARR_API_KEY=your_sonarr_api_key
-      - QBIT_URL=http://qbittorrent:8080
-      - QBIT_USERNAME=admin
-      - QBIT_PASSWORD=your_password
-      # Optional
-      - REFRESH_INTERVAL=60
-      - CROSSSEED_URL=http://cross-seed:2468
-      - CROSSSEED_API_KEY=your_crossseed_api_key
     volumes:
       - /mnt/user/data:/data:ro              # qBittorrent download root
       - /mnt/user/media:/media:ro            # Radarr / Sonarr media root
-      - /mnt/user/appdata/analysarr:/config  # persist path mappings set in the UI
+      - /mnt/user/appdata/analysarr:/config  # persists UI-configured credentials & mappings
     restart: unless-stopped
-    networks:
-      - media
-
-networks:
-  media:
-    external: true
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+Then open [http://localhost:3000](http://localhost:3000) and configure your services in **Settings**.
+
+> No environment variables or API keys in the compose file — everything is configured through the web UI and stored in `/config/mappings.json`.
+
+---
+
+## Configuration
+
+All service credentials are configured through **Settings → Services** in the web UI:
+
+1. Click a service card to expand it.
+2. Enter the URL and API key / credentials.
+3. Click **Test connection** — saving is only enabled once the connection succeeds.
+4. Click **Save**.
+
+Credentials are stored server-side in `/config/mappings.json` and are never exposed to the browser.
+
+### Optional environment variables
+
+These are only needed if you want to override the UI config via environment (e.g. for automated deployments):
+
+| Variable | Description |
+|---|---|
+| `RADARR_URL` | Base URL of your Radarr instance (e.g. `http://radarr:7878`) |
+| `RADARR_API_KEY` | Radarr API key (Settings → General) |
+| `SONARR_URL` | Base URL of your Sonarr instance |
+| `SONARR_API_KEY` | Sonarr API key |
+| `QBIT_URL` | Base URL of your qBittorrent WebUI |
+| `QBIT_USERNAME` | qBittorrent username (default: `admin`) |
+| `QBIT_PASSWORD` | qBittorrent password |
+| `CROSSSEED_URL` | Base URL of your Cross Seed instance (optional) |
+| `CROSSSEED_API_KEY` | Cross Seed API key — `cross-seed api-key` (optional) |
+| `REFRESH_INTERVAL` | Dashboard auto-refresh in seconds (default: `60`) |
+| `NEXT_PUBLIC_RADARR_URL` | Browser-accessible Radarr URL for detail page external links |
+| `NEXT_PUBLIC_SONARR_URL` | Browser-accessible Sonarr URL for detail page external links |
+| `CONFIG_PATH` | Override path for the config file (default: `/config/mappings.json`) |
+
+---
+
+## Path mappings
+
+If Radarr/Sonarr report paths that differ from the mount points visible inside the Analysarr container, configure a path mapping in **Settings → Path mappings**:
+
+- **Source** — the prefix that Radarr/Sonarr uses (e.g. `/data/media/tv`)
+- **Target** — the corresponding path inside the Analysarr container (e.g. `/media/tv`)
+
+Mappings take effect immediately and survive restarts (stored in `/config`).
+
+**Example — Unraid:** Sonarr reports `/data/media/tv/Show` but Analysarr mounts the share as `/media`. Set source `/data/media` → target `/media`.
+
+---
+
+## Hardlink detection
+
+Analysarr compares the **inode** of each file reported by Radarr/Sonarr against the inode of the qBittorrent torrent file using `fs.statSync({ bigint: true })`. Two files with identical inodes are hardlinks of the same data — reliable regardless of path layout and safe against JavaScript's 64-bit integer precision limit.
+
+Required volume mounts for inode comparison to work:
+
+```yaml
+volumes:
+  - /mnt/user/data:/data:ro    # qBittorrent download root
+  - /mnt/user/media:/media:ro  # Radarr / Sonarr media root
+```
+
+---
+
+## Duplicate detection
+
+A torrent is flagged as a **duplicate** when:
+- It is matched to a media entry in Radarr/Sonarr, **and**
+- Its size differs from the \*arr file size by more than 2%, **and**
+- It is **not** a cross-seed (cross-seeds are always treated as canonical regardless of size).
+
+Duplicates appear as amber badges on media cards and are listed in the Issues panel.
+
+---
+
+## Torrent matching
+
+Matching uses a four-level priority chain for each torrent:
+
+1. **Manual link** — user-configured override from the Torrents page (highest priority).
+2. **History hash** — Radarr/Sonarr `/history` API returns the exact qBittorrent hash for every past download. Most reliable method.
+3. **Path overlap** — the torrent's `content_path` shares a prefix with the media file path (after path mapping).
+4. **Name match** — year-gated token matching: torrent must contain the release year and all title words.
 
 ---
 
@@ -72,89 +137,12 @@ cd analysarr
 docker build -t analysarr .
 ```
 
-Or for local development:
+Local development:
 
 ```bash
 npm install
 npm run dev
 ```
-
----
-
-## Environment variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `RADARR_URL` | Yes | — | Base URL of your Radarr instance (e.g. `http://radarr:7878`) |
-| `RADARR_API_KEY` | Yes | — | Radarr API key (Settings → General) |
-| `SONARR_URL` | Yes | — | Base URL of your Sonarr instance |
-| `SONARR_API_KEY` | Yes | — | Sonarr API key |
-| `QBIT_URL` | Yes | — | Base URL of your qBittorrent WebUI |
-| `QBIT_USERNAME` | No | `admin` | qBittorrent WebUI username |
-| `QBIT_PASSWORD` | Yes | — | qBittorrent WebUI password |
-| `REFRESH_INTERVAL` | No | `60` | Dashboard auto-refresh interval in seconds |
-| `CROSSSEED_URL` | No | — | Base URL of your Cross Seed instance |
-| `CROSSSEED_API_KEY` | No | — | Cross Seed API key (`cross-seed api-key`) |
-| `NEXT_PUBLIC_RADARR_URL` | No | — | Browser-accessible Radarr URL for external links on detail pages |
-| `NEXT_PUBLIC_SONARR_URL` | No | — | Browser-accessible Sonarr URL for external links on detail pages |
-| `CONFIG_PATH` | No | `/config/mappings.json` | Override path for the UI-configured mappings file |
-
-> **No `.env` file is required.** All values are injected via `docker-compose` environment blocks.
-
----
-
-## FAQ
-
-### How does hardlink detection work?
-
-Analysarr compares the **inode** of each file reported by Radarr/Sonarr against the inode of the corresponding qBittorrent torrent file. Two files with identical inodes are hardlinks of the same data — this is the most reliable detection method regardless of path layout.
-
-For this to work, the same directories used by qBittorrent and Radarr/Sonarr must be mounted **read-only** into the Analysarr container. See the volume mounts in the docker-compose example above.
-
-### What volumes should I mount?
-
-Mount your download and media roots read-only so Analysarr can call `fs.stat()` on the files:
-
-```yaml
-volumes:
-  - /mnt/user/data:/data:ro      # qBittorrent download root
-  - /mnt/user/media:/media:ro    # Radarr / Sonarr media root
-  - /mnt/user/appdata/analysarr:/config  # persist UI-configured path mappings
-```
-
-### What if my paths inside and outside the container differ?
-
-If Radarr/Sonarr report paths that start with a different prefix than what is mounted in the Analysarr container, you need to configure a **path mapping**.
-
-Instead of setting environment variables, open **Settings → Path mappings** and use the interactive file browser to select:
-
-- **Source** — the prefix that Radarr/Sonarr uses (e.g. `/data/media/tv`)
-- **Target** — the corresponding path inside the Analysarr container (e.g. `/media/tv`)
-
-Mappings are saved to `/config/mappings.json` and take effect immediately on the next dashboard refresh. Mount a `/config` volume so they survive container restarts.
-
-**Example on Unraid:** Sonarr reports paths as `/data/media/tv/Show` but Analysarr mounts `/mnt/user/Data/media` as `/media`. Set:
-- Source: `/data/media`
-- Target: `/media`
-
-### How does Cross Seed detection work?
-
-Cross Seed detection reads the `tags` and `category` fields of each qBittorrent torrent and flags any torrent containing `cross-seed` as a cross-seed. This matches the default tag that Cross Seed sets when injecting a torrent into qBittorrent and works with any Cross Seed version.
-
-### Why are API keys not visible in Settings?
-
-API keys are server-side only and are never sent to the browser. The settings page shows masked placeholders and the actual URL values fetched from live service status checks.
-
----
-
-## Contributing
-
-Pull requests are welcome. For major changes please open an issue first.
-
-1. Fork the repo
-2. Create your feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes
-4. Push and open a Pull Request
 
 ---
 
