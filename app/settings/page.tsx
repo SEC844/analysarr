@@ -75,30 +75,30 @@ export default function SettingsPage() {
   const cfg = config;
 
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-8 animate-fade-in max-w-2xl">
       <div>
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="mt-1 text-sm text-zinc-400">Service configuration, path mappings and cache</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+        <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">Service configuration, path mappings and cache</p>
       </div>
 
-      {/* ── Services ──────────────────────────────────────────────────────── */}
+      {/* Services */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-white">Services</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Services</h2>
           <button
             onClick={() => refetchStatus()}
             disabled={statusFetching}
-            className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-default bg-surface px-3 py-1.5 text-sm text-gray-600 dark:text-zinc-300 hover:bg-elevated transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${statusFetching ? 'animate-spin' : ''}`} />
             Refresh status
           </button>
         </div>
 
-        <p className="text-xs text-zinc-500">
-          Click a service to expand its configuration. Use <strong className="text-zinc-400">Test connection</strong> before saving —
+        <p className="text-xs text-gray-400 dark:text-zinc-500">
+          Click a service to expand its configuration. Use <strong className="text-gray-600 dark:text-zinc-400">Test connection</strong> before saving —
           saving is disabled until the connection succeeds. Credentials are stored in{' '}
-          <code className="rounded bg-zinc-800 px-1 font-mono">/config/mappings.json</code> and never exposed to the browser.
+          <code className="rounded bg-gray-100 dark:bg-zinc-800 px-1 font-mono">/config/mappings.json</code> and never exposed to the browser.
         </p>
 
         <div className="space-y-2">
@@ -107,7 +107,7 @@ export default function SettingsPage() {
             currentUrl={cfg?.services.radarr.url || status?.radarr.url}
             status={status?.radarr} loading={statusFetching}
             fields={[
-              { key: 'url',    label: 'URL',     placeholder: 'http://radarr:7878 or http://10.0.0.100:7878' },
+              { key: 'url',    label: 'URL',     placeholder: 'http://radarr:7878' },
               { key: 'apiKey', label: 'API Key', placeholder: 'Settings → General → API Key', type: 'password' },
             ]}
             onSave={v => saveMutation.mutateAsync({ services: { radarr: v } })}
@@ -117,7 +117,7 @@ export default function SettingsPage() {
             currentUrl={cfg?.services.sonarr.url || status?.sonarr.url}
             status={status?.sonarr} loading={statusFetching}
             fields={[
-              { key: 'url',    label: 'URL',     placeholder: 'http://sonarr:8989 or http://10.0.0.100:8989' },
+              { key: 'url',    label: 'URL',     placeholder: 'http://sonarr:8989' },
               { key: 'apiKey', label: 'API Key', placeholder: 'Settings → General → API Key', type: 'password' },
             ]}
             onSave={v => saveMutation.mutateAsync({ services: { sonarr: v } })}
@@ -128,7 +128,7 @@ export default function SettingsPage() {
             currentUsername={cfg?.services.qbit.username}
             status={status?.qbit} loading={statusFetching}
             fields={[
-              { key: 'url',      label: 'URL',      placeholder: 'http://qbittorrent:8080 or http://10.0.0.100:8080' },
+              { key: 'url',      label: 'URL',      placeholder: 'http://qbittorrent:8080' },
               { key: 'username', label: 'Username', placeholder: 'admin' },
               { key: 'password', label: 'Password', type: 'password' },
             ]}
@@ -139,7 +139,7 @@ export default function SettingsPage() {
             currentUrl={cfg?.services.crossseed.url || status?.crossseed.url}
             status={status?.crossseed} loading={statusFetching}
             fields={[
-              { key: 'url',    label: 'URL',     placeholder: 'http://cross-seed:2468 or http://10.0.0.100:2468' },
+              { key: 'url',    label: 'URL',     placeholder: 'http://cross-seed:2468' },
               { key: 'apiKey', label: 'API Key', placeholder: 'Output of: cross-seed api-key', type: 'password' },
             ]}
             onSave={v => saveMutation.mutateAsync({ services: { crossseed: v } })}
@@ -147,42 +147,42 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ── Path mappings ─────────────────────────────────────────────────── */}
+      {/* Path mappings */}
       <PathMapper />
 
-      {/* ── Cache ─────────────────────────────────────────────────────────── */}
+      {/* Cache */}
       <section className="space-y-3">
-        <h2 className="text-base font-semibold text-white">Data cache</h2>
-        <p className="text-xs text-zinc-500">
-          Dashboard data is cached server-side and pre-refreshed in the background.
-          Auto-refresh every <strong className="text-zinc-400">{cfg?.refreshInterval ?? 60}s</strong>.
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white">Data cache</h2>
+        <p className="text-xs text-gray-400 dark:text-zinc-500">
+          Dashboard data is cached server-side. Auto-refresh every{' '}
+          <strong className="text-gray-600 dark:text-zinc-400">{cfg?.refreshInterval ?? 60}s</strong>.
         </p>
 
-        <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-          <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+        <div className="overflow-hidden rounded-xl border border-default bg-surface">
+          <div className="flex items-center justify-between border-b border-default px-4 py-3">
             <div className="flex items-center gap-2 text-sm">
-              <Clock className="h-4 w-4 text-zinc-500" />
-              <span className="text-zinc-300">Last refresh</span>
+              <Clock className="h-4 w-4 text-gray-400 dark:text-zinc-500" />
+              <span className="text-gray-700 dark:text-zinc-300">Last refresh</span>
             </div>
-            <span className="text-sm text-zinc-400">
+            <span className="text-sm text-gray-500 dark:text-zinc-400">
               {cacheStatus?.ageSeconds != null ? `${cacheStatus.ageSeconds}s ago` : 'Not yet fetched'}
             </span>
           </div>
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-2">
               {refreshNowMutation.isPending || cacheStatus?.refreshing
-                ? <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
+                ? <RefreshCw className="h-4 w-4 animate-spin text-blue-500 dark:text-blue-400" />
                 : cacheStatus?.ageSeconds != null
                   ? <Check className="h-4 w-4 text-green-500" />
-                  : <X className="h-4 w-4 text-zinc-600" />}
-              <span className="text-sm text-zinc-300">
+                  : <X className="h-4 w-4 text-gray-300 dark:text-zinc-600" />}
+              <span className="text-sm text-gray-700 dark:text-zinc-300">
                 {refreshNowMutation.isPending || cacheStatus?.refreshing ? 'Refreshing…' : 'Cache status'}
               </span>
             </div>
             <button
               onClick={() => refreshNowMutation.mutate()}
               disabled={refreshNowMutation.isPending || cacheStatus?.refreshing}
-              className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+              className="rounded-lg border border-default bg-elevated px-3 py-1 text-xs text-gray-600 dark:text-zinc-300 hover:bg-overlay transition-colors disabled:opacity-50"
             >
               Refresh now
             </button>
@@ -190,14 +190,14 @@ export default function SettingsPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <label className="text-xs text-zinc-400 shrink-0">Auto-refresh every</label>
+          <label className="text-xs text-gray-500 dark:text-zinc-400 shrink-0">Auto-refresh every</label>
           <input
             type="number" min={10} max={3600}
             value={intervalInput || (cfg?.refreshInterval ?? 60)}
             onChange={e => setIntervalInput(e.target.value)}
-            className="w-20 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-center text-sm text-zinc-200 outline-none focus:border-zinc-500"
+            className="w-20 rounded-lg border border-default bg-surface px-2 py-1.5 text-center text-sm text-gray-900 dark:text-zinc-200 outline-none focus:border-gray-400 dark:focus:border-zinc-500"
           />
-          <span className="text-xs text-zinc-400">seconds</span>
+          <span className="text-xs text-gray-400 dark:text-zinc-400">seconds</span>
           <button
             onClick={() => {
               const v = parseInt(intervalInput, 10);

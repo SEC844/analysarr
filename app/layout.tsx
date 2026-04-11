@@ -10,11 +10,25 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+    <html lang="en">
+      {/* Inline script: sets theme class before first paint to avoid flash */}
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function(){
+            try {
+              var t = localStorage.getItem('theme');
+              var d = t ? t === 'dark' : true; // default: dark
+              if (d) document.documentElement.classList.add('dark');
+            } catch(e){}
+          })();
+        `}} />
+      </head>
+      <body className="min-h-screen antialiased bg-app text-base">
         <QueryProvider>
           <Navbar />
-          <main className="px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+          <main className="px-4 sm:px-6 lg:px-8 py-6 max-w-screen-2xl mx-auto">
+            {children}
+          </main>
         </QueryProvider>
       </body>
     </html>

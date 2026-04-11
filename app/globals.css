@@ -2,24 +2,68 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ──────────────────────────────────────────────────────────── */
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
+  /* Light mode */
+  --bg:             250 250 250;   /* slate-50     */
+  --surface:        255 255 255;   /* white        */
+  --elevated:       244 244 245;   /* zinc-100     */
+  --overlay:        228 228 231;   /* zinc-200     */
+  --border:         228 228 231;   /* zinc-200     */
+  --border-strong:  212 212 216;   /* zinc-300     */
+  --text:           9   9   11;    /* zinc-950     */
+  --text-2:         82  82  91;    /* zinc-600     */
+  --text-3:         113 113 122;   /* zinc-500     */
+  --text-4:         161 161 170;   /* zinc-400     */
+  --accent:         59  130 246;   /* blue-500     */
 }
 
-html {
-  color-scheme: dark;
+.dark {
+  /* Dark mode */
+  --bg:             9   9   11;    /* zinc-950     */
+  --surface:        24  24  27;    /* zinc-900     */
+  --elevated:       39  39  42;    /* zinc-800     */
+  --overlay:        63  63  70;    /* zinc-700     */
+  --border:         39  39  42;    /* zinc-800     */
+  --border-strong:  63  63  70;    /* zinc-700     */
+  --text:           250 250 250;   /* zinc-50      */
+  --text-2:         161 161 170;   /* zinc-400     */
+  --text-3:         113 113 122;   /* zinc-500     */
+  --text-4:         82  82  91;    /* zinc-600     */
+  --accent:         96  165 250;   /* blue-400     */
 }
+
+html { color-scheme: light dark; }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Custom scrollbar ───────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(var(--border-strong)); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--text-3)); }
+
+/* ── Selection ──────────────────────────────────────────────────────────────── */
+::selection { background: rgb(var(--accent) / 0.25); }
+
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+  .text-balance { text-wrap: balance; }
+
+  /* Semantic colour utilities */
+  .bg-app         { background-color: rgb(var(--bg)); }
+  .bg-surface     { background-color: rgb(var(--surface)); }
+  .bg-elevated    { background-color: rgb(var(--elevated)); }
+  .bg-overlay     { background-color: rgb(var(--overlay)); }
+  .border-default { border-color: rgb(var(--border)); }
+  .border-strong  { border-color: rgb(var(--border-strong)); }
+  .text-base      { color: rgb(var(--text)); }
+  .text-sub       { color: rgb(var(--text-2)); }
+  .text-muted     { color: rgb(var(--text-3)); }
+  .text-faint     { color: rgb(var(--text-4)); }
 }

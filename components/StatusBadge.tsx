@@ -3,99 +3,87 @@
 import { cn } from '@/lib/utils';
 import type { SeedingStatus, HardlinkStatus, MediaType } from '@/lib/types';
 
-interface SeedBadgeProps {
-  status: SeedingStatus;
-  className?: string;
-}
+/* ── Seed ─────────────────────────────────────────────────────────────────── */
+interface SeedBadgeProps { status: SeedingStatus; className?: string; compact?: boolean }
 
-export function SeedBadge({ status, className }: SeedBadgeProps) {
+export function SeedBadge({ status, className, compact }: SeedBadgeProps) {
+  const base = compact ? 'px-1.5 py-0 text-[9px]' : 'px-2 py-0.5 text-xs';
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-        status === 'seeding'
-          ? 'bg-green-900/60 text-green-400 ring-1 ring-green-700'
-          : status === 'not_seeding'
-          ? 'bg-amber-900/60 text-amber-400 ring-1 ring-amber-700'
-          : 'bg-zinc-800 text-zinc-400 ring-1 ring-zinc-700',
-        className
-      )}
-    >
-      <span
-        className={cn(
-          'h-1.5 w-1.5 rounded-full',
-          status === 'seeding'
-            ? 'bg-green-400'
-            : status === 'not_seeding'
-            ? 'bg-amber-400'
-            : 'bg-zinc-500'
-        )}
-      />
-      {status === 'seeding' ? 'Seeding' : status === 'not_seeding' ? 'Not seeding' : 'Unknown'}
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full font-medium',
+      base,
+      status === 'seeding'
+        ? 'bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-400'
+        : status === 'not_seeding'
+        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-400'
+        : 'bg-gray-100 text-gray-500 dark:bg-zinc-800 dark:text-zinc-400',
+      className
+    )}>
+      <span className={cn(
+        'rounded-full',
+        compact ? 'h-1 w-1' : 'h-1.5 w-1.5',
+        status === 'seeding' ? 'bg-green-500 dark:bg-green-400'
+        : status === 'not_seeding' ? 'bg-amber-500 dark:bg-amber-400'
+        : 'bg-gray-400 dark:bg-zinc-500'
+      )} />
+      {status === 'seeding' ? 'Seeding' : status === 'not_seeding' ? 'No seed' : 'Unknown'}
     </span>
   );
 }
 
-interface HardlinkBadgeProps {
-  status: HardlinkStatus;
-  className?: string;
-}
+/* ── Hardlink ─────────────────────────────────────────────────────────────── */
+interface HardlinkBadgeProps { status: HardlinkStatus; className?: string; compact?: boolean }
 
-export function HardlinkBadge({ status, className }: HardlinkBadgeProps) {
+export function HardlinkBadge({ status, className, compact }: HardlinkBadgeProps) {
   if (status === 'unknown') return null;
+  const base = compact ? 'px-1.5 py-0 text-[9px]' : 'px-2 py-0.5 text-xs';
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-        status === 'hardlinked'
-          ? 'bg-green-900/40 text-green-400 ring-1 ring-green-800'
-          : 'bg-red-900/60 text-red-400 ring-1 ring-red-700',
-        className
-      )}
-    >
-      {status === 'hardlinked' ? '⛓ Hardlinked' : '✗ Not hardlinked'}
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full font-medium',
+      base,
+      status === 'hardlinked'
+        ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+        : 'bg-red-100 text-red-600 dark:bg-red-900/60 dark:text-red-400',
+      className
+    )}>
+      {status === 'hardlinked' ? '⛓ Hardlinked' : '✗ No hardlink'}
     </span>
   );
 }
 
-interface TypeBadgeProps {
-  type: MediaType;
-  className?: string;
-}
+/* ── Type ─────────────────────────────────────────────────────────────────── */
+interface TypeBadgeProps { type: MediaType; className?: string }
 
 export function TypeBadge({ type, className }: TypeBadgeProps) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        type === 'movie'
-          ? 'bg-blue-900/60 text-blue-300 ring-1 ring-blue-700'
-          : 'bg-purple-900/60 text-purple-300 ring-1 ring-purple-700',
-        className
-      )}
-    >
+    <span className={cn(
+      'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+      type === 'movie'
+        ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300'
+        : 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300',
+      className
+    )}>
       {type === 'movie' ? 'Movie' : 'Series'}
     </span>
   );
 }
 
-interface CrossSeedBadgeProps {
-  count: number;
-  className?: string;
-}
+/* ── Cross Seed ───────────────────────────────────────────────────────────── */
+interface CrossSeedBadgeProps { count: number; className?: string; compact?: boolean }
 
-export function CrossSeedBadge({ count, className }: CrossSeedBadgeProps) {
+export function CrossSeedBadge({ count, className, compact }: CrossSeedBadgeProps) {
   if (count === 0) return null;
+  const base = compact ? 'px-1.5 py-0 text-[9px]' : 'px-2 py-0.5 text-xs';
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-        'bg-cyan-900/60 text-cyan-300 ring-1 ring-cyan-700',
-        className
-      )}
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full font-medium',
+      base,
+      'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/60 dark:text-cyan-300',
+      className
+    )}
       title={`${count} cross-seed${count !== 1 ? 's' : ''} active`}
     >
-      ✕ {count} cross-seed{count !== 1 ? 's' : ''}
+      ×{count} CS
     </span>
   );
 }
