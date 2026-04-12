@@ -10,6 +10,8 @@ interface StatCardProps {
   icon: LucideIcon;
   color?: 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'zinc';
   className?: string;
+  onClick?: () => void;
+  active?: boolean;
 }
 
 const colorMap = {
@@ -21,14 +23,19 @@ const colorMap = {
   zinc:   'text-gray-500   dark:text-zinc-400   bg-gray-100   dark:bg-zinc-800/60',
 };
 
-export function StatCard({ label, value, icon: Icon, color = 'zinc', className }: StatCardProps) {
+export function StatCard({ label, value, icon: Icon, color = 'zinc', className, onClick, active }: StatCardProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
+      onClick={onClick}
       className={cn(
-        'rounded-xl border p-3 bg-surface border-default',
+        'rounded-xl border p-3 bg-surface transition-all duration-150',
+        active
+          ? 'border-blue-500 dark:border-blue-400 ring-1 ring-blue-500/40 dark:ring-blue-400/30 bg-blue-50/50 dark:bg-blue-950/20'
+          : 'border-default',
+        onClick && 'cursor-pointer hover:border-gray-300 dark:hover:border-zinc-600 hover:shadow-sm',
         className
       )}
     >

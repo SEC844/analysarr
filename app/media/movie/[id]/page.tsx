@@ -62,6 +62,15 @@ export default function MovieDetailPage() {
   const { media } = data;
   const fileSize = data.radarrMovie?.movieFile?.size ?? 0;
 
+  // Identify duplicate torrents client-side: matched, not cross-seed, size differs > 2% from arr file
+  const duplicateTorrents = media.hasDuplicates
+    ? media.torrents.filter(t => {
+        if (isCrossSeed(t.tags ?? '', t.category ?? '')) return false;
+        if (media.size <= 0) return false;
+        return Math.abs(t.size - media.size) / media.size > 0.02;
+      })
+    : [];
+
   return (
     <div className="space-y-6 animate-fade-in max-w-4xl">
       <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-white transition-colors">
@@ -69,14 +78,36 @@ export default function MovieDetailPage() {
       </Link>
 
       {media.hasDuplicates && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm text-amber-700 dark:text-amber-300">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-medium">Version différente détectée</p>
-            <p className="text-xs text-amber-600 dark:text-amber-400/80 mt-0.5">
-              {media.duplicateCount} torrent(s) dans /data ne correspondent pas à la version Radarr (taille différente, hors cross-seeds).
-            </p>
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm text-amber-700 dark:text-amber-300">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium">Version différente détectée</p>
+              <p className="text-xs text-amber-600 dark:text-amber-400/80 mt-0.5">
+                {media.duplicateCount} torrent(s) dans /data ne correspondent pas à la version Radarr (taille différente, hors cross-seeds).
+              </p>
+            </div>
           </div>
+          {duplicateTorrents.length > 0 && (
+            <div className="mt-3 space-y-1.5">
+              {duplicateTorrents.map(t => (
+                <div key={t.hash} className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-white/60 dark:bg-zinc-900/40 px-3 py-2">
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200 break-all">{t.name}</p>
+                  <div className="flex items-center gap-3 mt-1 text-[11px] text-amber-600 dark:text-amber-400/70">
+                    <span>{formatBytes(t.size)}</span>
+                    {media.size > 0 && (
+                      <span>Δ {((Math.abs(t.size - media.size) / media.size) * 100).toFixed(1)}% vs Radarr</span>
+                    )}
+                  </div>
+                  {t.content_path && (
+                    <p className="mt-1 break-all font-mono text-[10px] text-amber-500 dark:text-amber-500/70">
+                      {t.content_path}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

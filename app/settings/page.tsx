@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Check, X, Clock } from 'lucide-react';
+import { RefreshCw, Check, X, Clock, LayoutGrid } from 'lucide-react';
 import { ServiceCard } from '@/components/ServiceCard';
 import { PathMapper } from '@/components/PathMapper';
+import { usePosterSize } from '@/lib/hooks';
 
 interface StatusData {
   radarr:    { name: string; url: string; connected: boolean; error?: string; version?: string };
@@ -32,6 +33,7 @@ interface CacheStatus {
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [intervalInput, setIntervalInput] = useState('');
+  const [posterSize, setPosterSize] = usePosterSize();
 
   const { data: status, isFetching: statusFetching, refetch: refetchStatus } = useQuery<StatusData>({
     queryKey: ['status'],
@@ -80,6 +82,41 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">Service configuration, path mappings and cache</p>
       </div>
+
+      {/* Appearance */}
+      <section className="space-y-3">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white">Appearance</h2>
+        <div className="overflow-hidden rounded-xl border border-default bg-surface">
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-2 text-sm">
+              <LayoutGrid className="h-4 w-4 text-gray-400 dark:text-zinc-500" />
+              <span className="text-gray-700 dark:text-zinc-300">Poster size</span>
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-default bg-elevated p-0.5">
+              {([
+                { key: 'sm', label: 'Small' },
+                { key: 'md', label: 'Medium' },
+                { key: 'lg', label: 'Large'  },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setPosterSize(key)}
+                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                    posterSize === key
+                      ? 'bg-gray-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                      : 'text-gray-500 dark:text-zinc-400 hover:text-gray-700 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 dark:text-zinc-500">
+          Controls how many posters are shown per row on the dashboard. Medium is the default.
+        </p>
+      </section>
 
       {/* Services */}
       <section className="space-y-3">
