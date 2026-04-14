@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { X, Link2, Search, Film, Tv2, Check, ExternalLink } from 'lucide-react'
-import { useTorrents, useUnmatchedTorrents, useMediaList, useMapTorrent, useUnmapTorrent } from '../hooks/useMedia'
+import { useTorrents, useMediaList, useMapTorrent, useUnmapTorrent } from '../hooks/useMedia'
 import { cn, formatBytes, QBIT_STATE_LABELS, type TorrentWithMedia, type MediaListItem } from '../types'
 
 const SEEDING_STATES = new Set(['uploading', 'stalledUP', 'forcedUP', 'queuedUP', 'checkingUP'])
