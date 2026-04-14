@@ -164,7 +164,8 @@ class MediaItem(BaseModel):
     is_duplicate:     bool = False
 
     # Fichiers trouvés dans /torrents et /crossseed
-    torrents_files:   list[FileMetadata] = Field(default_factory=list)
+    torrents_files:   list[FileMetadata] = Field(default_factory=list)   # hardlinks (même inode)
+    duplicate_files:  list[FileMetadata] = Field(default_factory=list)   # copies (même taille, inode différent)
     crossseed_files:  list[FileMetadata] = Field(default_factory=list)
 
     # Torrents qBit associés

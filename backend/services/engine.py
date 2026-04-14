@@ -308,6 +308,7 @@ class ScanEngine:
         item.is_cross_seeded  = result["is_cross_seeded"]
         item.is_duplicate     = result["is_duplicate"]
         item.torrents_files   = result["torrents_files"]
+        item.duplicate_files  = result["duplicate_files"]
         item.crossseed_files  = result["crossseed_files"]
         item.matched_torrents = result["matched_torrents"]
 
@@ -361,6 +362,7 @@ class ScanEngine:
         item.is_cross_seeded  = result["is_cross_seeded"]
         item.is_duplicate     = result["is_duplicate"]
         item.torrents_files   = result["torrents_files"]
+        item.duplicate_files  = result["duplicate_files"]
         item.crossseed_files  = result["crossseed_files"]
         item.matched_torrents = result["matched_torrents"]
 
@@ -411,44 +413,69 @@ class ScanEngine:
     ) -> None:
         """
         Associe les torrents non matchés à des médias connus.
-        Utilise le matching en mémoire (pas d'appel API) si les données sont disponibles.
-        Fallback API uniquement si les listes sont vides.
+
+        Stratégie à deux niveaux :
+        1. Matching en mémoire (titre, IMDB inline) — instantané, sans API
+        2. Si pas de match : API Radarr/Sonarr (proxy TMDB/TVDB) pour obtenir l'IMDB ID,
+           puis re-match contre la bibliothèque par IMDB ID (beaucoup plus fiable que titre)
+
+        Limité à 5 appels API concurrents pour ne pas surcharger Radarr/Sonarr.
         """
         results: list[UnmatchedTorrent] = []
-        use_memory = bool(self._movies or self._series)
+        semaphore = asyncio.Semaphore(5)
 
-        for t in torrents:
+        async def _resolve_one(t: QbitTorrent) -> UnmatchedTorrent:
             try:
-                if use_memory:
-                    # Matching en mémoire — O(n), instantané, pas d'API
-                    media_id, title, year, imdb_id = match_against_known_media(
-                        t.name, self._movies, self._series
-                    )
-                    results.append(UnmatchedTorrent(
-                        torrent=t,
-                        guessed_title=title,
-                        guessed_year=year,
-                        imdb_id=imdb_id,
-                        suggested_media_id=media_id,
-                    ))
-                else:
-                    # Fallback API (première utilisation avant scan complet)
-                    imdb_id, title, year = await resolve_imdb_from_torrent(
-                        t.name, radarr_client, sonarr_client
-                    )
-                    results.append(UnmatchedTorrent(
-                        torrent=t,
-                        guessed_title=title,
-                        guessed_year=year,
-                        imdb_id=imdb_id,
-                    ))
+                # ── Étape 1 : matching en mémoire ─────────────────────────────
+                media_id, title, year, imdb_id = match_against_known_media(
+                    t.name, self._movies, self._series
+                )
+
+                # ── Étape 2 : API fallback si pas de match biblio ─────────────
+                if not media_id and (radarr_client or sonarr_client):
+                    async with semaphore:
+                        api_imdb, api_title, api_year = await resolve_imdb_from_torrent(
+                            t.name, radarr_client, sonarr_client
+                        )
+
+                    if api_imdb:
+                        imdb_id = api_imdb
+                        # Re-match par IMDB ID — beaucoup plus fiable que le titre
+                        for m in self._movies:
+                            if m.imdb_id and m.imdb_id.lower() == api_imdb.lower():
+                                media_id = f"radarr_{m.id}"
+                                break
+                        if not media_id:
+                            for s in self._series:
+                                if s.imdb_id and s.imdb_id.lower() == api_imdb.lower():
+                                    media_id = f"sonarr_{s.id}"
+                                    break
+
+                    if api_title and not title:
+                        title = api_title
+                    if api_year and not year:
+                        year = api_year
+
+                return UnmatchedTorrent(
+                    torrent=t,
+                    guessed_title=title,
+                    guessed_year=year,
+                    imdb_id=imdb_id,
+                    suggested_media_id=media_id,
+                )
             except Exception as e:
                 logger.debug("Unmatched resolution error for '%s': %s", t.name, e)
-                results.append(UnmatchedTorrent(torrent=t))
+                return UnmatchedTorrent(torrent=t)
+
+        results = list(await asyncio.gather(*[_resolve_one(t) for t in torrents]))
 
         self._unmatched = results
         matched_count = sum(1 for r in results if r.suggested_media_id)
-        logger.info("Unmatched: %d torrents, %d auto-associés", len(results), matched_count)
+        api_used = sum(1 for r in results if r.imdb_id and r.suggested_media_id)
+        logger.info(
+            "Unmatched: %d torrents, %d auto-associés (%d via API)",
+            len(results), matched_count, api_used,
+        )
 
     # ── Background refresh ────────────────────────────────────────────────────
 

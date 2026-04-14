@@ -57,7 +57,8 @@ export interface MediaItem {
   is_cross_seeded:  boolean
   is_duplicate:     boolean
 
-  torrents_files:   FileMetadata[]
+  torrents_files:   FileMetadata[]   // hardlinks (même inode)
+  duplicate_files:  FileMetadata[]   // copies (même taille, inode différent)
   crossseed_files:  FileMetadata[]
   matched_torrents: QbitTorrent[]
 

@@ -198,9 +198,14 @@ def classify_media_file(
     ]
 
     # 5. Drapeaux et classification
-    is_seeding      = len(matched_qbit) > 0
-    is_hardlinked   = len(torrent_hardlinks) > 0
+    #
+    # Règles hardlink :
+    #   - Un fichier est hardlinké si son inode se trouve dans /torrents OU dans /crossseed
+    #   - On est "en seed" si qBit a un torrent actif OU si crossseed a le fichier
+    #   - Un doublon = même taille, inode DIFFÉRENT (copie physique distincte), et PAS hardlinké
     is_cross_seeded = len(crossseed_files) > 0
+    is_hardlinked   = len(torrent_hardlinks) > 0 or is_cross_seeded   # même inode = hardlink
+    is_seeding      = len(matched_qbit) > 0 or is_cross_seeded        # seedé via qBit ou crossseed
     is_duplicate    = len(torrent_same_size) > 0 and not is_hardlinked
 
     if not is_seeding:
@@ -215,11 +220,12 @@ def classify_media_file(
         status = SeedStatus.SEED_NOT_HARDLINK
 
     return {
-        "seed_status": status,
-        "torrents_files": torrent_hardlinks + torrent_same_size,
+        "seed_status":     status,
+        "torrents_files":  torrent_hardlinks,        # hardlinks uniquement (inode identique)
+        "duplicate_files": torrent_same_size,        # copies (même taille, inode différent)
         "crossseed_files": crossseed_files,
         "matched_torrents": matched_qbit,
-        "is_hardlinked": is_hardlinked,
+        "is_hardlinked":   is_hardlinked,
         "is_cross_seeded": is_cross_seeded,
-        "is_duplicate": is_duplicate,
+        "is_duplicate":    is_duplicate,
     }

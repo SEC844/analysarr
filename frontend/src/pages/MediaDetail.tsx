@@ -1,5 +1,5 @@
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Film, Tv2, HardDrive, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Film, Tv2, HardDrive, ExternalLink, AlertTriangle } from 'lucide-react'
 import { useMediaDetail } from '../hooks/useMedia'
 import { StatusBadge } from '../components/StatusBadge'
 import { cn, formatBytes, formatSpeed, formatEta, QBIT_STATE_LABELS } from '../types'
@@ -109,10 +109,10 @@ export default function MediaDetail() {
         )}
       </Section>
 
-      {/* Fichiers dans /torrents */}
+      {/* Fichiers dans /torrents — section toujours visible */}
       <Section title={`Fichiers dans /torrents (${item.torrents_files.length})`}>
         {item.torrents_files.length === 0 ? (
-          <Empty text="Aucun fichier trouvé dans /torrents" />
+          <Empty text="Aucun hardlink trouvé dans /torrents" />
         ) : (
           <div className="space-y-1.5">
             {item.torrents_files.map((f, i) => (
@@ -122,18 +122,29 @@ export default function MediaDetail() {
         )}
       </Section>
 
-      {/* Cross-seed */}
-      {(item.crossseed_files.length > 0 || item.is_cross_seeded) && (
+      {/* Cross-seed — uniquement si des fichiers sont présents */}
+      {item.crossseed_files.length > 0 && (
         <Section title={`Cross-seed (/cross-seed) (${item.crossseed_files.length})`}>
-          {item.crossseed_files.length === 0 ? (
-            <Empty text="Aucun fichier cross-seed trouvé" />
-          ) : (
-            <div className="space-y-1.5">
-              {item.crossseed_files.map((f, i) => (
-                <FileRow key={i} file={f} accent="cyan" />
-              ))}
-            </div>
-          )}
+          <div className="space-y-1.5">
+            {item.crossseed_files.map((f, i) => (
+              <FileRow key={i} file={f} accent="cyan" />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Doublons — uniquement si des copies physiques distinctes sont détectées */}
+      {item.is_duplicate && item.duplicate_files.length > 0 && (
+        <Section title={`Doublons détectés (${item.duplicate_files.length})`} warning>
+          <p className="mb-2 text-xs text-amber-400/80">
+            Ces fichiers ont la même taille que le fichier de référence mais un inode différent —
+            ce sont des copies physiques distinctes (pas des hardlinks).
+          </p>
+          <div className="space-y-1.5">
+            {item.duplicate_files.map((f, i) => (
+              <FileRow key={i} file={f} accent="amber" />
+            ))}
+          </div>
         </Section>
       )}
 
@@ -155,11 +166,15 @@ export default function MediaDetail() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, warning }: { title: string; children: React.ReactNode; warning?: boolean }) {
+  const Icon = warning ? AlertTriangle : HardDrive
   return (
     <section className="space-y-2">
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-        <HardDrive className="h-3.5 w-3.5 text-zinc-500" />
+      <h2 className={cn(
+        'flex items-center gap-2 text-sm font-semibold',
+        warning ? 'text-amber-400' : 'text-zinc-300',
+      )}>
+        <Icon className={cn('h-3.5 w-3.5', warning ? 'text-amber-500' : 'text-zinc-500')} />
         {title}
       </h2>
       {children}
@@ -170,10 +185,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function FileRow({ file, highlight = false, accent }: {
   file: { path: string; size: number; inode: number; nlink: number; exists: boolean }
   highlight?: boolean
-  accent?: 'cyan'
+  accent?: 'cyan' | 'amber'
 }) {
   const borderColor = accent === 'cyan'
     ? 'border-cyan-900/60 bg-cyan-950/20'
+    : accent === 'amber'
+    ? 'border-amber-900/60 bg-amber-950/20'
     : highlight
     ? 'border-blue-900/60 bg-blue-950/20'
     : 'border-zinc-800 bg-zinc-900'
