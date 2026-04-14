@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { MediaItem, GlobalStats, ScanStatus, AppConfig, ConnectionTestResult, UnmatchedTorrent, QbitTorrent } from '../types'
+import type { MediaItem, GlobalStats, ScanStatus, AppConfig, AppConfigPublic, PathsConfig, ConnectionTestResult, UnmatchedTorrent, QbitTorrent } from '../types'
 
 const API = '/api'
 
@@ -67,10 +67,14 @@ export function useTriggerScan() {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+/**
+ * Charge la config publique : URLs + has_credentials (bool).
+ * Les credentials (api_key, password…) ne sont JAMAIS renvoyés par l'API.
+ */
 export function useConfig() {
-  return useQuery<AppConfig>({
+  return useQuery<AppConfigPublic>({
     queryKey: ['config'],
-    queryFn: () => fetch(`${API}/config/full`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/config`).then(r => r.json()),
     staleTime: Infinity,
   })
 }
@@ -85,6 +89,13 @@ export function useSaveConfig() {
         body: JSON.stringify(cfg),
       }).then(r => r.json()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['config'] }),
+  })
+}
+
+/** Détecte automatiquement les chemins media/torrents/cross-seed dans le conteneur. */
+export function useDetectPaths() {
+  return useMutation<PathsConfig, Error>({
+    mutationFn: () => fetch(`${API}/config/detect-paths`).then(r => r.json()),
   })
 }
 

@@ -25,7 +25,7 @@ from ..models.schemas import (
 from .radarr import RadarrClient
 from .sonarr import SonarrClient
 from .qbittorrent import QBittorrentClient
-from .scanner import classify_media_file, get_file_metadata
+from .scanner import classify_media_file, get_file_metadata, build_index, TorrentIndex
 from .identifier import resolve_imdb_from_torrent
 
 logger = logging.getLogger(__name__)
@@ -167,6 +167,17 @@ class ScanEngine:
                 self._qbit_torrents = qbit_torrents
                 self._qbit_cache_ts = time.time()
 
+            # ── Pré-scan des répertoires (UNE SEULE FOIS) ─────────────────────
+            loop = asyncio.get_event_loop()
+            torrent_index, crossseed_index = await asyncio.gather(
+                loop.run_in_executor(None, build_index, torrents_dir),
+                loop.run_in_executor(None, build_index, crossseed_dir or ""),
+            )
+            logger.info(
+                "Index construit — torrents: %d inodes / crossseed: %d inodes",
+                len(torrent_index.by_inode), len(crossseed_index.by_inode),
+            )
+
             total = len(movies) + len(series)
             self._scan_status.total_items = total
             scanned = 0
@@ -177,7 +188,7 @@ class ScanEngine:
             # ── Films ─────────────────────────────────────────────────────────
             for movie in movies:
                 item = await self._process_movie(
-                    movie, qbit_torrents, torrents_dir, crossseed_dir,
+                    movie, qbit_torrents, torrent_index, crossseed_index,
                     radarr_client, matched_hashes,
                 )
                 new_items.append(item)
@@ -188,7 +199,7 @@ class ScanEngine:
             # ── Séries ────────────────────────────────────────────────────────
             for show in series:
                 item = await self._process_series(
-                    show, qbit_torrents, torrents_dir, crossseed_dir,
+                    show, qbit_torrents, torrent_index, crossseed_index,
                     sonarr_client, matched_hashes,
                 )
                 new_items.append(item)
@@ -219,8 +230,8 @@ class ScanEngine:
         self,
         movie: RadarrMovie,
         qbit_torrents: list[QbitTorrent],
-        torrents_dir: str,
-        crossseed_dir: Optional[str],
+        torrent_index: TorrentIndex,
+        crossseed_index: TorrentIndex,
         radarr_client,
         matched_hashes: set[str],
     ) -> MediaItem:
@@ -238,7 +249,6 @@ class ScanEngine:
         if not movie.file_path:
             return item
 
-        # Scan du fichier de référence
         media_file = await asyncio.get_event_loop().run_in_executor(
             None, get_file_metadata, movie.file_path
         )
@@ -247,12 +257,8 @@ class ScanEngine:
         if not media_file.exists:
             return item
 
-        # Classification inode
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            classify_media_file,
-            media_file, torrents_dir, crossseed_dir, qbit_torrents,
-        )
+        # Classification O(1) via index
+        result = classify_media_file(media_file, torrent_index, crossseed_index, qbit_torrents)
 
         item.seed_status      = result["seed_status"]
         item.is_hardlinked    = result["is_hardlinked"]
@@ -271,8 +277,8 @@ class ScanEngine:
         self,
         show: SonarrSeries,
         qbit_torrents: list[QbitTorrent],
-        torrents_dir: str,
-        crossseed_dir: Optional[str],
+        torrent_index: TorrentIndex,
+        crossseed_index: TorrentIndex,
         sonarr_client,
         matched_hashes: set[str],
     ) -> MediaItem:
@@ -291,14 +297,11 @@ class ScanEngine:
         if not show.path:
             return item
 
-        # Pour les séries, on scan le dossier entier et on prend le plus gros fichier
-        # comme référence (l'épisode principal)
         largest = await asyncio.get_event_loop().run_in_executor(
             None, self._find_largest_file, show.path
         )
 
         if not largest:
-            # Au minimum, indiquer que le dossier existe
             dir_stat = await asyncio.get_event_loop().run_in_executor(
                 None, get_file_metadata, show.path
             )
@@ -307,12 +310,8 @@ class ScanEngine:
 
         item.media_file = largest
 
-        # Classification basée sur le plus gros fichier
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            classify_media_file,
-            largest, torrents_dir, crossseed_dir, qbit_torrents,
-        )
+        # Classification O(1) via index
+        result = classify_media_file(largest, torrent_index, crossseed_index, qbit_torrents)
 
         item.seed_status      = result["seed_status"]
         item.is_hardlinked    = result["is_hardlinked"]

@@ -104,11 +104,17 @@ export interface AppConfig {
   paths:       PathsConfig
 }
 
+export interface ServiceConfigPublic {
+  url:             string
+  enabled:         boolean
+  has_credentials: boolean  // true si api_key/password configuré côté serveur
+}
+
 export interface AppConfigPublic {
-  radarr:      { url: string; enabled: boolean }
-  sonarr:      { url: string; enabled: boolean }
-  qbittorrent: { url: string; enabled: boolean }
-  crossseed:   { url: string; enabled: boolean }
+  radarr:      ServiceConfigPublic
+  sonarr:      ServiceConfigPublic
+  qbittorrent: ServiceConfigPublic
+  crossseed:   ServiceConfigPublic
   paths:       PathsConfig
 }
 

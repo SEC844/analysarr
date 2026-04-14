@@ -12,8 +12,6 @@ services:
       - /mnt/user/data:/data:ro
       # Config persistante
       - /mnt/user/appdata/analysarr:/config
-    environment:
-      - CONFIG_PATH=/config/settings.json
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/scan/status')"]

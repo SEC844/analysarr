@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
-from ..config import load_config, save_config, invalidate_cache
+from ..config import load_config, save_config, merge_credentials, _autodiscover_paths
 from ..models.schemas import (
     AppConfig, AppConfigPublic, ServiceConfigPublic,
     ConnectionTestResult, PathsConfig,
@@ -20,84 +20,114 @@ from ..services.crossseed import CrossSeedClient
 router = APIRouter(prefix="/config", tags=["config"])
 
 
-def _public(cfg: AppConfig) -> AppConfigPublic:
-    """Retourne la config sans credentials."""
+def _to_public(cfg: AppConfig) -> AppConfigPublic:
+    """Retourne la config SANS aucun credential (api_key, password, username)."""
     return AppConfigPublic(
-        radarr=ServiceConfigPublic(url=cfg.radarr.url, enabled=cfg.radarr.enabled),
-        sonarr=ServiceConfigPublic(url=cfg.sonarr.url, enabled=cfg.sonarr.enabled),
-        qbittorrent=ServiceConfigPublic(url=cfg.qbittorrent.url, enabled=cfg.qbittorrent.enabled),
-        crossseed=ServiceConfigPublic(url=cfg.crossseed.url, enabled=cfg.crossseed.enabled),
+        radarr=ServiceConfigPublic(
+            url=cfg.radarr.url,
+            enabled=cfg.radarr.enabled,
+            has_credentials=bool(cfg.radarr.api_key),
+        ),
+        sonarr=ServiceConfigPublic(
+            url=cfg.sonarr.url,
+            enabled=cfg.sonarr.enabled,
+            has_credentials=bool(cfg.sonarr.api_key),
+        ),
+        qbittorrent=ServiceConfigPublic(
+            url=cfg.qbittorrent.url,
+            enabled=cfg.qbittorrent.enabled,
+            has_credentials=bool(cfg.qbittorrent.username or cfg.qbittorrent.password),
+        ),
+        crossseed=ServiceConfigPublic(
+            url=cfg.crossseed.url,
+            enabled=cfg.crossseed.enabled,
+            has_credentials=bool(cfg.crossseed.api_key),
+        ),
         paths=cfg.paths,
     )
 
 
+# ── GET /api/config ─────────────────────────────────────────────────────────
+
 @router.get("", response_model=AppConfigPublic)
 async def get_config():
-    """Retourne la config publique (sans credentials)."""
-    return _public(load_config())
-
-
-@router.get("/full")
-async def get_config_full():
     """
-    Retourne la config complète AVEC credentials.
-    À n'utiliser que depuis la page Settings du frontend.
+    Retourne la config publique.
+    Les credentials (api_key, password…) ne sont JAMAIS renvoyés.
+    Le frontend affiche `has_credentials=true` comme indicateur qu'ils sont configurés.
     """
-    cfg = load_config()
-    return cfg.model_dump()
+    return _to_public(load_config())
 
+
+# ── PUT /api/config ─────────────────────────────────────────────────────────
 
 @router.put("", response_model=AppConfigPublic)
 async def update_config(body: AppConfig):
-    """Sauvegarde la config complète."""
-    save_config(body)
-    return _public(body)
+    """
+    Sauvegarde la config.
+    Règle : si un champ credential est vide dans le body, on conserve la valeur stockée.
+    Cela permet au frontend d'envoyer uniquement les champs modifiés.
+    """
+    stored = load_config()
+    merged = merge_credentials(stored, body)
+    save_config(merged)
+    return _to_public(merged)
 
+
+# ── POST /api/config/test/{service} ────────────────────────────────────────
 
 @router.post("/test/{service}", response_model=ConnectionTestResult)
 async def test_connection(service: str, body: Optional[AppConfig] = None):
     """
-    Teste la connexion à un service.
-    Si `body` est fourni, utilise les credentials live (non sauvegardés).
-    Sinon, utilise la config sauvegardée.
+    Teste la connexion à un service avec les valeurs live du formulaire.
+    Si `body` est fourni, fusionne avec la config stockée (credentials vides → stockés).
     """
-    cfg = body if body is not None else load_config()
+    stored = load_config()
+    cfg = merge_credentials(stored, body) if body is not None else stored
 
     match service:
         case "radarr":
             if not cfg.radarr.url:
                 return ConnectionTestResult(service="radarr", success=False, message="URL non configurée")
-            client = RadarrClient(cfg.radarr.url, cfg.radarr.api_key)
-            return await client.test_connection()
+            return await RadarrClient(cfg.radarr.url, cfg.radarr.api_key).test_connection()
 
         case "sonarr":
             if not cfg.sonarr.url:
                 return ConnectionTestResult(service="sonarr", success=False, message="URL non configurée")
-            client = SonarrClient(cfg.sonarr.url, cfg.sonarr.api_key)
-            return await client.test_connection()
+            return await SonarrClient(cfg.sonarr.url, cfg.sonarr.api_key).test_connection()
 
         case "qbittorrent":
             if not cfg.qbittorrent.url:
                 return ConnectionTestResult(service="qbittorrent", success=False, message="URL non configurée")
-            client = QBittorrentClient(cfg.qbittorrent.url, cfg.qbittorrent.username, cfg.qbittorrent.password)
-            return await client.test_connection()
+            return await QBittorrentClient(
+                cfg.qbittorrent.url, cfg.qbittorrent.username, cfg.qbittorrent.password
+            ).test_connection()
 
         case "crossseed":
             if not cfg.crossseed.url:
                 return ConnectionTestResult(service="crossseed", success=False, message="URL non configurée")
-            client = CrossSeedClient(cfg.crossseed.url, cfg.crossseed.api_key)
-            return await client.test_connection()
+            return await CrossSeedClient(cfg.crossseed.url, cfg.crossseed.api_key).test_connection()
 
         case _:
             raise HTTPException(status_code=400, detail=f"Service inconnu : {service}")
 
 
+# ── GET /api/config/detect-paths ───────────────────────────────────────────
+
+@router.get("/detect-paths", response_model=PathsConfig)
+async def detect_paths():
+    """
+    Détecte automatiquement les chemins media/torrents/cross-seed dans le conteneur.
+    Retourne les chemins suggérés sans modifier la config.
+    """
+    return _autodiscover_paths()
+
+
+# ── GET /api/config/browse ─────────────────────────────────────────────────
+
 @router.get("/browse")
 async def browse_directory(path: str = "/"):
-    """
-    Liste les répertoires disponibles dans le conteneur.
-    Utilisé par le frontend pour l'explorateur de chemins.
-    """
+    """Liste les répertoires disponibles — utilisé par l'explorateur de chemins."""
     try:
         entries = []
         with os.scandir(path) as it:
@@ -107,6 +137,6 @@ async def browse_directory(path: str = "/"):
         entries.sort(key=lambda e: e["name"])
         return {"path": path, "dirs": entries}
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission refusée")
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Directory not found")
+        raise HTTPException(status_code=404, detail="Dossier introuvable")

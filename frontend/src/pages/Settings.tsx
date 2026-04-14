@@ -1,24 +1,47 @@
 import { useState, useEffect } from 'react'
-import { Check, X, Loader2, ChevronRight, FolderOpen } from 'lucide-react'
-import { useConfig, useSaveConfig, useTestConnection, useBrowse } from '../hooks/useMedia'
-import { cn, type AppConfig, type ServiceConfig } from '../types'
+import { Check, X, Loader2, ChevronRight, FolderOpen, Wand2, KeyRound } from 'lucide-react'
+import {
+  useConfig, useSaveConfig, useTestConnection, useBrowse, useDetectPaths,
+} from '../hooks/useMedia'
+import { cn, type AppConfig } from '../types'
+
+// Formulaire local — les credentials sont write-only :
+// - champ vide = "ne pas modifier" (le backend conserve la valeur stockée)
+// - champ rempli = nouvelle valeur à sauvegarder
+const EMPTY_FORM: AppConfig = {
+  radarr:      { url: '', api_key: '', username: '', password: '', enabled: true },
+  sonarr:      { url: '', api_key: '', username: '', password: '', enabled: true },
+  qbittorrent: { url: '', username: '', password: '', api_key: '', enabled: true },
+  crossseed:   { url: '', api_key: '', username: '', password: '', enabled: false },
+  paths: { media: '/media', torrents: '/data/torrents', crossseed: '/data/cross-seed' },
+}
 
 export default function Settings() {
   const { data: config, isLoading } = useConfig()
-  const saveConfig = useSaveConfig()
-  const testConn   = useTestConnection()
+  const saveConfig  = useSaveConfig()
+  const testConn    = useTestConnection()
+  const detectPaths = useDetectPaths()
 
-  const [form, setForm] = useState<AppConfig | null>(null)
-  const [saved, setSaved] = useState(false)
+  const [form, setForm]           = useState<AppConfig>(EMPTY_FORM)
+  const [saved, setSaved]         = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
-  const [browsePath, setBrowsePath] = useState<string | null>(null)
+  const [browsePath, setBrowsePath]   = useState<string | null>(null)
   const [browseField, setBrowseField] = useState<string | null>(null)
 
+  // Pré-remplir URLs depuis la config publique (credentials jamais retournés)
   useEffect(() => {
-    if (config && !form) setForm(config)
+    if (!config) return
+    setForm(prev => ({
+      ...prev,
+      radarr:      { ...prev.radarr,      url: config.radarr.url,      enabled: config.radarr.enabled },
+      sonarr:      { ...prev.sonarr,      url: config.sonarr.url,      enabled: config.sonarr.enabled },
+      qbittorrent: { ...prev.qbittorrent, url: config.qbittorrent.url, enabled: config.qbittorrent.enabled },
+      crossseed:   { ...prev.crossseed,   url: config.crossseed.url,   enabled: config.crossseed.enabled },
+      paths: config.paths,
+    }))
   }, [config])
 
-  if (isLoading || !form) return (
+  if (isLoading) return (
     <div className="flex items-center justify-center py-20">
       <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
     </div>
@@ -26,19 +49,15 @@ export default function Settings() {
 
   const update = (path: string[], value: string | boolean) => {
     setForm(prev => {
-      if (!prev) return prev
       const next = structuredClone(prev)
       let cur: Record<string, unknown> = next as unknown as Record<string, unknown>
-      for (let i = 0; i < path.length - 1; i++) {
-        cur = cur[path[i]] as Record<string, unknown>
-      }
+      for (let i = 0; i < path.length - 1; i++) cur = cur[path[i]] as Record<string, unknown>
       cur[path[path.length - 1]] = value
       return next
     })
   }
 
   const handleTest = async (service: string) => {
-    if (!form) return
     const result = await testConn.mutateAsync({ service, config: form })
     setTestResults(prev => ({ ...prev, [service]: result }))
   }
@@ -46,62 +65,70 @@ export default function Settings() {
   const handleSave = async () => {
     await saveConfig.mutateAsync(form)
     setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    // Réinitialiser les champs credentials (write-only)
+    setForm(prev => ({
+      ...prev,
+      radarr:      { ...prev.radarr,      api_key: '' },
+      sonarr:      { ...prev.sonarr,      api_key: '' },
+      qbittorrent: { ...prev.qbittorrent, password: '' },
+      crossseed:   { ...prev.crossseed,   api_key: '' },
+    }))
+    setTimeout(() => setSaved(false), 2500)
+  }
+
+  const handleDetectPaths = async () => {
+    const paths = await detectPaths.mutateAsync()
+    setForm(prev => ({ ...prev, paths }))
   }
 
   const handleBrowse = (field: string, currentPath: string) => {
     setBrowseField(field)
-    // Toujours démarrer depuis la racine du chemin configuré
-    // ou depuis '/' si le chemin n'est pas absolu / vide
-    const start = currentPath && currentPath.startsWith('/') ? currentPath : '/'
-    setBrowsePath(start)
+    setBrowsePath(currentPath && currentPath.startsWith('/') ? currentPath : '/')
   }
 
   const handlePickDir = (path: string) => {
-    if (browseField) {
-      const parts = browseField.split('.')
-      update(parts, path)
-    }
+    if (browseField) update(browseField.split('.'), path)
     setBrowsePath(null)
     setBrowseField(null)
   }
 
-  const services: Array<{
-    key: keyof AppConfig
-    label: string
-    fields: Array<{ key: keyof ServiceConfig; label: string; type: 'text' | 'password' }>
-  }> = [
+  // ── Services configurables ──────────────────────────────────────────────────
+  type FieldDef = { key: 'url' | 'api_key' | 'username' | 'password'; label: string; type: 'text' | 'password'; credential: boolean }
+  type ServiceDef = { key: keyof AppConfig & ('radarr' | 'sonarr' | 'qbittorrent' | 'crossseed'); label: string; optional?: boolean; fields: FieldDef[] }
+
+  const services: ServiceDef[] = [
     {
       key: 'radarr',
       label: 'Radarr',
       fields: [
-        { key: 'url',     label: 'URL',     type: 'text' },
-        { key: 'api_key', label: 'API Key', type: 'password' },
+        { key: 'url',     label: 'URL',     type: 'text',     credential: false },
+        { key: 'api_key', label: 'API Key', type: 'password', credential: true  },
       ],
     },
     {
       key: 'sonarr',
       label: 'Sonarr',
       fields: [
-        { key: 'url',     label: 'URL',     type: 'text' },
-        { key: 'api_key', label: 'API Key', type: 'password' },
+        { key: 'url',     label: 'URL',     type: 'text',     credential: false },
+        { key: 'api_key', label: 'API Key', type: 'password', credential: true  },
       ],
     },
     {
       key: 'qbittorrent',
       label: 'qBittorrent',
       fields: [
-        { key: 'url',      label: 'URL',           type: 'text' },
-        { key: 'username', label: 'Utilisateur',   type: 'text' },
-        { key: 'password', label: 'Mot de passe',  type: 'password' },
+        { key: 'url',      label: 'URL',          type: 'text',     credential: false },
+        { key: 'username', label: 'Utilisateur',  type: 'text',     credential: true  },
+        { key: 'password', label: 'Mot de passe', type: 'password', credential: true  },
       ],
     },
     {
       key: 'crossseed',
-      label: 'Cross Seed (optionnel)',
+      label: 'Cross Seed',
+      optional: true,
       fields: [
-        { key: 'url',     label: 'URL',     type: 'text' },
-        { key: 'api_key', label: 'API Key', type: 'password' },
+        { key: 'url',     label: 'URL',     type: 'text',     credential: false },
+        { key: 'api_key', label: 'API Key', type: 'password', credential: true  },
       ],
     },
   ]
@@ -110,21 +137,24 @@ export default function Settings() {
     <div className="max-w-2xl space-y-8">
       <h1 className="text-xl font-bold text-white">Paramètres</h1>
 
-      {/* Services */}
-      {services.map(({ key, label, fields }) => {
-        const svc = form[key] as ServiceConfig
-        const tr  = testResults[String(key)]
+      {/* ── Services ──────────────────────────────────────────────────────── */}
+      {services.map(({ key, label, fields, optional }) => {
+        const svc     = form[key]
+        const pub     = config?.[key]
+        const tr      = testResults[key]
+        const enabled = svc.enabled
+
         return (
-          <section key={String(key)} className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <section key={key} className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-white">{label}</h2>
-              {key === 'crossseed' && (
-                <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
+              {optional && (
+                <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    checked={svc.enabled}
-                    onChange={e => update([String(key), 'enabled'], e.target.checked)}
-                    className="rounded"
+                    checked={enabled}
+                    onChange={e => update([key, 'enabled'], e.target.checked)}
+                    className="rounded accent-blue-500"
                   />
                   Activé
                 </label>
@@ -132,31 +162,53 @@ export default function Settings() {
             </div>
 
             <div className="space-y-3">
-              {fields.map(f => (
-                <div key={String(f.key)}>
-                  <label className="block text-xs text-zinc-500 mb-1">{f.label}</label>
-                  <input
-                    type={f.type}
-                    value={String((svc as unknown as Record<string, unknown>)[String(f.key)] ?? '')}
-                    onChange={e => update([String(key), String(f.key)], e.target.value)}
-                    placeholder={f.key === 'url' ? 'http://192.168.1.x:7878' : ''}
-                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              ))}
+              {fields.map(f => {
+                const isCredential = f.credential
+                const isSet = isCredential && pub?.has_credentials
+                return (
+                  <div key={f.key}>
+                    <label className="flex items-center gap-1.5 text-xs text-zinc-500 mb-1">
+                      {f.label}
+                      {isCredential && (
+                        <span className={cn(
+                          'inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium',
+                          isSet
+                            ? 'bg-green-900/50 text-green-400'
+                            : 'bg-zinc-800 text-zinc-500',
+                        )}>
+                          <KeyRound className="h-2.5 w-2.5" />
+                          {isSet ? 'Configuré' : 'Non configuré'}
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type={f.type}
+                      value={String((svc as unknown as Record<string, unknown>)[f.key] ?? '')}
+                      onChange={e => update([key, f.key], e.target.value)}
+                      placeholder={
+                        f.key === 'url'
+                          ? 'http://192.168.1.x:7878'
+                          : isCredential && isSet
+                          ? '•••••••• (laisser vide pour conserver)'
+                          : ''
+                      }
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                )
+              })}
             </div>
 
-            {/* Test connection */}
+            {/* Test connexion */}
             <div className="flex items-center gap-3">
               <button
-                onClick={() => handleTest(String(key))}
+                onClick={() => handleTest(key)}
                 disabled={testConn.isPending}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
               >
-                {testConn.isPending && testConn.variables?.service === String(key)
+                {testConn.isPending && testConn.variables?.service === key
                   ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : null
-                }
+                  : null}
                 Tester la connexion
               </button>
               {tr && (
@@ -170,18 +222,32 @@ export default function Settings() {
         )
       })}
 
-      {/* Chemins */}
+      {/* ── Chemins ───────────────────────────────────────────────────────── */}
       <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-        <h2 className="font-semibold text-white">Chemins volumes</h2>
-        <p className="text-xs text-zinc-500">
-          Ces chemins correspondent aux points de montage dans le conteneur Docker.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold text-white">Chemins volumes</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Points de montage dans le conteneur Docker.
+            </p>
+          </div>
+          <button
+            onClick={handleDetectPaths}
+            disabled={detectPaths.isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
+          >
+            {detectPaths.isPending
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Wand2 className="h-3.5 w-3.5" />}
+            Auto-détecter
+          </button>
+        </div>
 
         {([
-          { key: 'media',     label: 'Bibliothèque (Radarr / Sonarr)' },
-          { key: 'torrents',  label: 'Dossier torrents (qBittorrent)' },
-          { key: 'crossseed', label: 'Dossier cross-seed (optionnel)' },
-        ] as const).map(({ key, label }) => (
+          { key: 'media'     as const, label: 'Bibliothèque (Radarr / Sonarr)' },
+          { key: 'torrents'  as const, label: 'Dossier torrents (qBittorrent)'  },
+          { key: 'crossseed' as const, label: 'Dossier cross-seed (optionnel)'  },
+        ]).map(({ key, label }) => (
           <div key={key}>
             <label className="block text-xs text-zinc-500 mb-1">{label}</label>
             <div className="flex gap-2">
@@ -193,6 +259,7 @@ export default function Settings() {
               />
               <button
                 onClick={() => handleBrowse(`paths.${key}`, form.paths[key])}
+                title="Parcourir"
                 className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-400 hover:text-white hover:bg-zinc-700"
               >
                 <FolderOpen className="h-4 w-4" />
@@ -202,7 +269,7 @@ export default function Settings() {
         ))}
       </section>
 
-      {/* Save */}
+      {/* ── Sauvegarder ───────────────────────────────────────────────────── */}
       <button
         onClick={handleSave}
         disabled={saveConfig.isPending}
@@ -213,15 +280,10 @@ export default function Settings() {
             : 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50',
         )}
       >
-        {saveConfig.isPending
-          ? 'Sauvegarde…'
-          : saved
-          ? '✓ Sauvegardé !'
-          : 'Sauvegarder la configuration'
-        }
+        {saveConfig.isPending ? 'Sauvegarde…' : saved ? '✓ Sauvegardé !' : 'Sauvegarder la configuration'}
       </button>
 
-      {/* Browser modal */}
+      {/* ── Browser modal ─────────────────────────────────────────────────── */}
       {browsePath !== null && (
         <DirBrowser
           path={browsePath}
@@ -237,10 +299,7 @@ export default function Settings() {
 // ── Directory browser ─────────────────────────────────────────────────────────
 
 function DirBrowser({
-  path,
-  onNavigate,
-  onSelect,
-  onClose,
+  path, onNavigate, onSelect, onClose,
 }: {
   path: string
   onNavigate: (p: string) => void
@@ -249,24 +308,21 @@ function DirBrowser({
 }) {
   const { data, isLoading, isError } = useBrowse(path)
 
-  const goUp = () => {
-    const parent = path.split('/').slice(0, -1).join('/') || '/'
-    onNavigate(parent)
-  }
+  const goUp = () => onNavigate(path.split('/').slice(0, -1).join('/') || '/')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
 
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3 gap-2">
+        <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
           {path !== '/' && (
-            <button onClick={goUp} className="text-zinc-400 hover:text-white shrink-0 text-sm">
+            <button onClick={goUp} className="shrink-0 text-xs text-zinc-400 hover:text-white">
               ← Retour
             </button>
           )}
-          <code className="flex-1 text-xs text-zinc-400 truncate text-right">{path}</code>
-          <button onClick={onClose} className="text-zinc-500 hover:text-white shrink-0 ml-2">
+          <code className="flex-1 truncate text-xs text-zinc-400">{path}</code>
+          <button onClick={onClose} className="shrink-0 text-zinc-500 hover:text-white">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -278,7 +334,7 @@ function DirBrowser({
               <Loader2 className="mx-auto h-5 w-5 animate-spin text-zinc-600" />
             </div>
           ) : isError ? (
-            <div className="py-10 text-center space-y-2">
+            <div className="py-8 text-center space-y-2">
               <p className="text-xs text-red-400">Dossier inaccessible</p>
               {path !== '/' && (
                 <button onClick={goUp} className="text-xs text-zinc-500 hover:text-zinc-300 underline">
@@ -307,7 +363,7 @@ function DirBrowser({
 
         {/* Footer */}
         <div className="border-t border-zinc-800 p-3 space-y-2">
-          <p className="text-[10px] text-zinc-600 text-center truncate">{path}</p>
+          <p className="truncate text-center text-[10px] text-zinc-600">{path}</p>
           <button
             onClick={() => onSelect(path)}
             className="w-full rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700"

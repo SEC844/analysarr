@@ -18,6 +18,8 @@ from typing import Optional
 
 from .models.schemas import AppConfig, ServiceConfig, PathsConfig
 
+# Chemin de la config — /config/settings.json par défaut (idem dans le conteneur Docker)
+# Peut être surchargé via CONFIG_PATH si besoin, mais les utilisateurs n'ont pas à le faire.
 CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/config/settings.json"))
 
 _config_cache: Optional[AppConfig] = None
@@ -82,3 +84,28 @@ def save_config(cfg: AppConfig) -> None:
 def invalidate_cache() -> None:
     global _config_cache
     _config_cache = None
+
+
+def merge_credentials(stored: AppConfig, incoming: AppConfig) -> AppConfig:
+    """
+    Fusionne la config stockée avec la config entrante.
+    Règle : si un champ credential (api_key / username / password) est vide
+    dans `incoming`, on conserve la valeur stockée.
+    Utilisé pour le PUT /api/config et le test de connexion live.
+    """
+    def _merge_svc(s: ServiceConfig, i: ServiceConfig) -> ServiceConfig:
+        return ServiceConfig(
+            url=i.url,
+            api_key=i.api_key  if i.api_key  else s.api_key,
+            username=i.username if i.username else s.username,
+            password=i.password if i.password else s.password,
+            enabled=i.enabled,
+        )
+
+    return AppConfig(
+        radarr=_merge_svc(stored.radarr, incoming.radarr),
+        sonarr=_merge_svc(stored.sonarr, incoming.sonarr),
+        qbittorrent=_merge_svc(stored.qbittorrent, incoming.qbittorrent),
+        crossseed=_merge_svc(stored.crossseed, incoming.crossseed),
+        paths=incoming.paths,
+    )

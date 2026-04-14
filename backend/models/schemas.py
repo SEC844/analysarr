@@ -58,19 +58,20 @@ class AppConfig(BaseModel):
     paths:        PathsConfig   = Field(default_factory=PathsConfig)
 
 
+class ServiceConfigPublic(BaseModel):
+    """Infos non-sensibles d'un service (jamais de credentials)."""
+    url:             str
+    enabled:         bool
+    has_credentials: bool = False  # true si api_key/password est configuré
+
+
 class AppConfigPublic(BaseModel):
-    """Config safe à renvoyer au frontend (credentials masqués)."""
+    """Config safe à renvoyer au frontend (credentials jamais exposés)."""
     radarr:       ServiceConfigPublic
     sonarr:       ServiceConfigPublic
     qbittorrent:  ServiceConfigPublic
     crossseed:    ServiceConfigPublic
     paths:        PathsConfig
-
-
-class ServiceConfigPublic(BaseModel):
-    url:     str
-    enabled: bool
-    # api_key, username, password intentionnellement exclus
 
 
 # ── qBittorrent ───────────────────────────────────────────────────────────────
