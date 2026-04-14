@@ -126,10 +126,20 @@ export interface ConnectionTestResult {
 }
 
 export interface UnmatchedTorrent {
-  torrent:       QbitTorrent
-  guessed_title: string | null
-  guessed_year:  number | null
-  imdb_id:       string | null
+  torrent:            QbitTorrent
+  guessed_title:      string | null
+  guessed_year:       number | null
+  imdb_id:            string | null
+  suggested_media_id: string | null  // ex: "radarr_123"
+  manual_media_id:    string | null
+}
+
+export interface MediaListItem {
+  id:      string   // "radarr_123" | "sonarr_456"
+  title:   string
+  year:    number
+  type:    'movie' | 'series'
+  imdb_id: string | null
 }
 
 // ── Constantes UI ──────────────────────────────────────────────────────────────

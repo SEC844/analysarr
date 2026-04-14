@@ -1,10 +1,10 @@
 """Routes torrents qBittorrent."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from ..config import load_config
-from ..models.schemas import QbitTorrent, UnmatchedTorrent
+from ..models.schemas import QbitTorrent, UnmatchedTorrent, MapRequest
 from ..services.qbittorrent import QBittorrentClient
 from ..services.engine import engine
 
@@ -40,9 +40,29 @@ async def list_torrents():
 async def unmatched_torrents():
     """
     Torrents qBit non associés à aucun média Radarr/Sonarr.
-    Retourne depuis le cache (résolution IMDB faite lors du scan).
+    Retourne depuis le cache (résolution faite lors du scan).
     """
     return engine.get_unmatched()
+
+
+@router.get("/media-list")
+async def media_list():
+    """Liste simplifiée de tous les médias (pour le mapping manuel)."""
+    return engine.get_media_list()
+
+
+@router.post("/{torrent_hash}/map")
+async def map_torrent(torrent_hash: str, body: MapRequest):
+    """Associe manuellement un torrent à un média Radarr/Sonarr."""
+    engine.set_manual_mapping(torrent_hash, body.media_id)
+    return {"message": "Associé", "hash": torrent_hash, "media_id": body.media_id}
+
+
+@router.delete("/{torrent_hash}/map")
+async def unmap_torrent(torrent_hash: str):
+    """Supprime l'association manuelle d'un torrent."""
+    engine.remove_manual_mapping(torrent_hash)
+    return {"message": "Association supprimée", "hash": torrent_hash}
 
 
 @router.get("/poster/{source}/{media_id}")

@@ -196,7 +196,13 @@ class ConnectionTestResult(BaseModel):
 
 
 class UnmatchedTorrent(BaseModel):
-    torrent:     QbitTorrent
-    guessed_title: Optional[str] = None
-    guessed_year:  Optional[int] = None
-    imdb_id:       Optional[str] = None
+    torrent:            QbitTorrent
+    guessed_title:      Optional[str] = None
+    guessed_year:       Optional[int] = None
+    imdb_id:            Optional[str] = None
+    suggested_media_id: Optional[str] = None  # "radarr_123" suggéré auto
+    manual_media_id:    Optional[str] = None  # mappé manuellement par l'user
+
+
+class MapRequest(BaseModel):
+    media_id: str  # "radarr_123" ou "sonarr_456"

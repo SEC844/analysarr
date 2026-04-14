@@ -1,11 +1,12 @@
 """
 Identification IMDB depuis un nom de torrent.
 
-Stratégie (dans l'ordre de fiabilité) :
-1. parse-torrent-name (PTN) pour extraire titre + année proprement
-2. Lookup Radarr /api/v3/movie/lookup comme proxy TMDB
-3. Lookup Sonarr /api/v3/series/lookup pour les séries
-4. Retour None si aucun match suffisant
+Stratégie (priorité décroissante) :
+1. PTN détecte saison/épisode → c'est une série → Sonarr en premier
+2. Pas de saison/épisode → film → Radarr en premier
+3. Matching en mémoire contre les titres déjà connus (pas d'API supplémentaire)
+4. Score combiné : similarité titre + bonus si année exacte + bonus articles
+5. Fallback : API lookup Radarr/Sonarr si aucun match en mémoire
 """
 from __future__ import annotations
 
@@ -15,18 +16,19 @@ import unicodedata
 from typing import TYPE_CHECKING, Optional
 
 try:
-    import PTN  # parse-torrent-name
+    import PTN
     _PTN_AVAILABLE = True
 except ImportError:
     _PTN_AVAILABLE = False
 
 if TYPE_CHECKING:
+    from ..models.schemas import RadarrMovie, SonarrSeries
     from .radarr import RadarrClient
     from .sonarr import SonarrClient
 
 logger = logging.getLogger(__name__)
 
-# Regex de nettoyage pour fallback si PTN non disponible
+# ── Nettoyage regex fallback ──────────────────────────────────────────────────
 _QUALITY_RE = re.compile(
     r"\b(?:multi|vff?|vostfr|truefrench|french|english|dubbed|subbed"
     r"|bluray|blu[-.]?ray|webrip|web[-.]?dl|web|hdtv|hdrip|bdrip|dvdrip"
@@ -38,13 +40,12 @@ _QUALITY_RE = re.compile(
     r"|proper|repack|extended|theatrical|unrated|directors|edition|cut)\b",
     re.IGNORECASE,
 )
+# Articles à ignorer pour la comparaison
+_ARTICLES = {"the", "a", "an", "le", "la", "les", "un", "une", "des", "l"}
 
 
 def extract_title_year(torrent_name: str) -> tuple[str, Optional[int]]:
-    """
-    Extrait un titre lisible et une année depuis un nom de torrent.
-    Utilise PTN si disponible, sinon fallback regex.
-    """
+    """Extrait titre lisible + année depuis un nom de torrent."""
     if _PTN_AVAILABLE:
         try:
             parsed = PTN.parse(torrent_name)
@@ -55,25 +56,33 @@ def extract_title_year(torrent_name: str) -> tuple[str, Optional[int]]:
         except Exception:
             pass
 
-    # Fallback : nettoyage regex
+    # Fallback regex
     name = torrent_name
-    # Retirer extension
     name = re.sub(r"\.[a-z0-9]{2,4}$", "", name, flags=re.IGNORECASE)
-    # Capturer l'année si présente avant de la retirer
     year_match = re.search(r"\b(19|20)\d{2}\b", name)
     year_int: Optional[int] = int(year_match.group()) if year_match else None
-    # Retirer tags qualité
+    # Couper au pattern S01/E01
+    name = re.sub(r"\b[Ss]\d{1,2}[Ee]\d{1,2}\b.*$", "", name)
     name = _QUALITY_RE.sub(" ", name)
-    # Retirer l'année du titre
     name = re.sub(r"\b(19|20)\d{2}\b", " ", name)
-    # Normaliser les séparateurs
     name = re.sub(r"[._\-\[\](){}+]+", " ", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name, year_int
 
 
+def is_episode(torrent_name: str) -> bool:
+    """True si le torrent semble être un épisode de série (S01E01, saison…)."""
+    if _PTN_AVAILABLE:
+        try:
+            parsed = PTN.parse(torrent_name)
+            return bool(parsed.get("season") or parsed.get("episode"))
+        except Exception:
+            pass
+    return bool(re.search(r"\b[Ss]\d{1,2}[Ee]\d{1,2}\b", torrent_name))
+
+
 def _normalize(s: str) -> str:
-    """Normalise une chaîne pour comparaison : minuscules, sans accents, sans ponctuation."""
+    """Minuscules, sans accents, sans ponctuation."""
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = s.lower()
@@ -82,8 +91,12 @@ def _normalize(s: str) -> str:
     return s
 
 
-def _title_match_score(a: str, b: str) -> float:
-    """Score de similarité entre deux titres (0.0–1.0)."""
+def _tokens_no_articles(s: str) -> set[str]:
+    return {t for t in _normalize(s).split() if t not in _ARTICLES}
+
+
+def _title_score(a: str, b: str) -> float:
+    """Score 0-1 combinant Jaccard et bonus correspondance sans articles."""
     na, nb = _normalize(a), _normalize(b)
     if not na or not nb:
         return 0.0
@@ -92,13 +105,79 @@ def _title_match_score(a: str, b: str) -> float:
 
     tokens_a = set(na.split())
     tokens_b = set(nb.split())
-    if not tokens_a or not tokens_b:
-        return 0.0
+    jaccard = len(tokens_a & tokens_b) / len(tokens_a | tokens_b) if (tokens_a | tokens_b) else 0.0
 
-    intersection = tokens_a & tokens_b
-    union = tokens_a | tokens_b
-    return len(intersection) / len(union)  # Jaccard similarity
+    # Bonus si les tokens sans articles sont identiques
+    ta = _tokens_no_articles(a)
+    tb = _tokens_no_articles(b)
+    if ta and tb and ta == tb:
+        jaccard = min(1.0, jaccard + 0.15)
 
+    return jaccard
+
+
+def _find_best(
+    title: str,
+    year: Optional[int],
+    candidates: list[tuple[str, str, int, Optional[str]]],  # (id, title, year, imdb)
+    threshold: float = 0.55,
+) -> Optional[tuple[str, str, Optional[str]]]:  # (media_id, title, imdb)
+    best_score = 0.0
+    best: Optional[tuple[str, str, Optional[str]]] = None
+
+    for media_id, ctitle, cyear, imdb in candidates:
+        # Filtre année strict (±1 an)
+        if year and cyear and abs(cyear - year) > 1:
+            continue
+
+        score = _title_score(title, ctitle)
+
+        # Bonus si année exacte
+        if year and cyear and year == cyear:
+            score = min(1.0, score + 0.08)
+
+        if score > best_score and score >= threshold:
+            best_score = score
+            best = (media_id, ctitle, imdb)
+
+    return best
+
+
+# ── Matching principal (en mémoire — O(n), pas d'appel API) ──────────────────
+
+def match_against_known_media(
+    torrent_name: str,
+    movies: list["RadarrMovie"],
+    series: list["SonarrSeries"],
+) -> tuple[Optional[str], Optional[str], Optional[int], Optional[str]]:
+    """
+    Associe un torrent à un média connu (Radarr/Sonarr) sans appel réseau.
+
+    Returns : (media_id, guessed_title, guessed_year, imdb_id)
+    media_id = "radarr_123" ou "sonarr_456", None si pas de match.
+    """
+    title, year = extract_title_year(torrent_name)
+    if not title:
+        return None, None, year, None
+
+    episode = is_episode(torrent_name)
+
+    movie_candidates = [(f"radarr_{m.id}", m.title, m.year, m.imdb_id) for m in movies]
+    series_candidates = [(f"sonarr_{s.id}", s.title, s.year, s.imdb_id) for s in series]
+
+    # Séries en premier si épisode détecté, films sinon
+    primary, secondary = (series_candidates, movie_candidates) if episode else (movie_candidates, series_candidates)
+
+    match = _find_best(title, year, primary) or _find_best(title, year, secondary)
+
+    if match:
+        media_id, matched_title, imdb_id = match
+        return media_id, title, year, imdb_id
+
+    return None, title, year, None
+
+
+# ── Fallback API (quand les données en mémoire sont vides) ───────────────────
 
 async def resolve_imdb_from_torrent(
     torrent_name: str,
@@ -106,56 +185,46 @@ async def resolve_imdb_from_torrent(
     sonarr_client: Optional["SonarrClient"] = None,
 ) -> tuple[Optional[str], Optional[str], Optional[int]]:
     """
-    Tente de résoudre l'IMDB ID d'un torrent.
-
-    Returns (imdb_id, guessed_title, guessed_year).
-    imdb_id peut être None si non trouvé.
+    Fallback : résolution IMDB via Radarr/Sonarr API.
+    N'est utilisé que si les données en mémoire ne sont pas disponibles.
     """
     title, year = extract_title_year(torrent_name)
     if not title:
         return None, None, year
 
+    episode = is_episode(torrent_name)
     best_imdb: Optional[str] = None
-    best_score: float = 0.0
-    threshold = 0.6  # score minimum pour accepter un match
+    best_score = 0.0
+    threshold = 0.55
 
-    # Essai Radarr en premier (films)
-    if radarr_client:
+    async def _search(client, method: str) -> None:
+        nonlocal best_imdb, best_score
         try:
-            results = await radarr_client.lookup_movie(title)
-            for r in results[:10]:  # limiter à 10 résultats
-                candidate_title = r.get("title", "")
-                candidate_year = r.get("year")
+            results = await getattr(client, method)(title)
+            for r in results[:15]:
+                ctitle = r.get("title", "")
+                cyear = r.get("year")
                 imdb = r.get("imdbId") or None
-
-                # Gate année : doit correspondre si on en a une
-                if year and candidate_year and abs(candidate_year - year) > 1:
+                if year and cyear and abs(cyear - year) > 1:
                     continue
-
-                score = _title_match_score(title, candidate_title)
+                score = _title_score(title, ctitle)
+                if year and cyear and year == cyear:
+                    score = min(1.0, score + 0.08)
                 if score > best_score and score >= threshold:
                     best_score = score
                     best_imdb = imdb
         except Exception as e:
-            logger.debug("Radarr lookup failed for '%s': %s", title, e)
+            logger.debug("Lookup failed for '%s': %s", title, e)
 
-    # Essai Sonarr si pas trouvé (séries)
-    if not best_imdb and sonarr_client:
-        try:
-            results = await sonarr_client.lookup_series(title)
-            for r in results[:10]:
-                candidate_title = r.get("title", "")
-                candidate_year = r.get("year")
-                imdb = r.get("imdbId") or None
-
-                if year and candidate_year and abs(candidate_year - year) > 1:
-                    continue
-
-                score = _title_match_score(title, candidate_title)
-                if score > best_score and score >= threshold:
-                    best_score = score
-                    best_imdb = imdb
-        except Exception as e:
-            logger.debug("Sonarr lookup failed for '%s': %s", title, e)
+    if episode:
+        if sonarr_client:
+            await _search(sonarr_client, "lookup_series")
+        if not best_imdb and radarr_client:
+            await _search(radarr_client, "lookup_movie")
+    else:
+        if radarr_client:
+            await _search(radarr_client, "lookup_movie")
+        if not best_imdb and sonarr_client:
+            await _search(sonarr_client, "lookup_series")
 
     return best_imdb, title, year

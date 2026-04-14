@@ -12,6 +12,9 @@ frontend/dist/
 
 # Config (local dev only)
 /config/
+.env
+.env.local
+.env.*.local
 
 # Misc
 .DS_Store

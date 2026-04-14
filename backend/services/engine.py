@@ -26,7 +26,7 @@ from .radarr import RadarrClient
 from .sonarr import SonarrClient
 from .qbittorrent import QBittorrentClient
 from .scanner import classify_media_file, get_file_metadata, build_index, TorrentIndex
-from .identifier import resolve_imdb_from_torrent
+from .identifier import match_against_known_media, resolve_imdb_from_torrent
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,13 @@ class ScanEngine:
         self._qbit_cache_ts: float = 0.0
         self._unmatched: list[UnmatchedTorrent] = []
 
+        # Données médias en mémoire (pour le matching sans appel API)
+        self._movies: list[RadarrMovie] = []
+        self._series: list[SonarrSeries] = []
+
+        # Mappings manuels : hash qBit → media_id ("radarr_123")
+        self._manual_mappings: dict[str, str] = {}
+
     def _get_lock(self) -> asyncio.Lock:
         """Crée le lock lazily dans l'event loop courant."""
         if self._lock is None:
@@ -81,7 +88,39 @@ class ScanEngine:
         return self._qbit_torrents
 
     def get_unmatched(self) -> list[UnmatchedTorrent]:
-        return self._unmatched
+        # Appliquer les mappings manuels en temps réel
+        result = []
+        for u in self._unmatched:
+            manual = self._manual_mappings.get(u.torrent.hash.lower())
+            result.append(u.model_copy(update={"manual_media_id": manual}))
+        return result
+
+    def set_manual_mapping(self, torrent_hash: str, media_id: str) -> None:
+        self._manual_mappings[torrent_hash.lower()] = media_id
+
+    def remove_manual_mapping(self, torrent_hash: str) -> None:
+        self._manual_mappings.pop(torrent_hash.lower(), None)
+
+    def get_media_list(self) -> list[dict]:
+        """Retourne la liste simplifiée de tous les médias (pour le mapping manuel)."""
+        result = []
+        for m in self._movies:
+            result.append({
+                "id": f"radarr_{m.id}",
+                "title": m.title,
+                "year": m.year,
+                "type": "movie",
+                "imdb_id": m.imdb_id,
+            })
+        for s in self._series:
+            result.append({
+                "id": f"sonarr_{s.id}",
+                "title": s.title,
+                "year": s.year,
+                "type": "series",
+                "imdb_id": s.imdb_id,
+            })
+        return sorted(result, key=lambda x: x["title"].lower())
 
     # ── Accès cache ───────────────────────────────────────────────────────────
 
@@ -162,10 +201,14 @@ class ScanEngine:
             if isinstance(results[2], Exception):
                 logger.error("qBittorrent fetch failed: %s", results[2])
 
-            # Mettre à jour le cache torrents immédiatement
+            # Mettre à jour les caches immédiats
             if qbit_torrents:
                 self._qbit_torrents = qbit_torrents
                 self._qbit_cache_ts = time.time()
+            if movies:
+                self._movies = movies
+            if series:
+                self._series = series
 
             # ── Pré-scan des répertoires (UNE SEULE FOIS) ─────────────────────
             loop = asyncio.get_event_loop()
@@ -366,32 +409,46 @@ class ScanEngine:
         radarr_client,
         sonarr_client,
     ) -> None:
-        """Résout les IMDB des torrents non matchés en arrière-plan (best-effort)."""
+        """
+        Associe les torrents non matchés à des médias connus.
+        Utilise le matching en mémoire (pas d'appel API) si les données sont disponibles.
+        Fallback API uniquement si les listes sont vides.
+        """
         results: list[UnmatchedTorrent] = []
-        batch_size = 8
-        for i in range(0, len(torrents), batch_size):
-            batch = torrents[i:i + batch_size]
+        use_memory = bool(self._movies or self._series)
+
+        for t in torrents:
             try:
-                resolved = await asyncio.gather(
-                    *[resolve_imdb_from_torrent(t.name, radarr_client, sonarr_client) for t in batch],
-                    return_exceptions=True,
-                )
-                for t, res in zip(batch, resolved):
-                    if isinstance(res, Exception):
-                        results.append(UnmatchedTorrent(torrent=t))
-                    else:
-                        imdb_id, guessed_title, guessed_year = res
-                        results.append(UnmatchedTorrent(
-                            torrent=t,
-                            guessed_title=guessed_title,
-                            guessed_year=guessed_year,
-                            imdb_id=imdb_id,
-                        ))
+                if use_memory:
+                    # Matching en mémoire — O(n), instantané, pas d'API
+                    media_id, title, year, imdb_id = match_against_known_media(
+                        t.name, self._movies, self._series
+                    )
+                    results.append(UnmatchedTorrent(
+                        torrent=t,
+                        guessed_title=title,
+                        guessed_year=year,
+                        imdb_id=imdb_id,
+                        suggested_media_id=media_id,
+                    ))
+                else:
+                    # Fallback API (première utilisation avant scan complet)
+                    imdb_id, title, year = await resolve_imdb_from_torrent(
+                        t.name, radarr_client, sonarr_client
+                    )
+                    results.append(UnmatchedTorrent(
+                        torrent=t,
+                        guessed_title=title,
+                        guessed_year=year,
+                        imdb_id=imdb_id,
+                    ))
             except Exception as e:
-                logger.warning("Unmatched resolution batch error: %s", e)
-                results.extend(UnmatchedTorrent(torrent=t) for t in batch)
+                logger.debug("Unmatched resolution error for '%s': %s", t.name, e)
+                results.append(UnmatchedTorrent(torrent=t))
+
         self._unmatched = results
-        logger.info("Unmatched resolution done: %d torrents", len(results))
+        matched_count = sum(1 for r in results if r.suggested_media_id)
+        logger.info("Unmatched: %d torrents, %d auto-associés", len(results), matched_count)
 
     # ── Background refresh ────────────────────────────────────────────────────
 

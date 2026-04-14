@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, X, Loader2, ChevronRight, FolderOpen, Wand2, KeyRound } from 'lucide-react'
 import {
   useConfig, useSaveConfig, useTestConnection, useBrowse, useDetectPaths,
@@ -283,14 +284,15 @@ export default function Settings() {
         {saveConfig.isPending ? 'Sauvegarde…' : saved ? '✓ Sauvegardé !' : 'Sauvegarder la configuration'}
       </button>
 
-      {/* ── Browser modal ─────────────────────────────────────────────────── */}
-      {browsePath !== null && (
+      {/* ── Browser modal (portal → rendu hors du DOM Settings) ─────────── */}
+      {browsePath !== null && createPortal(
         <DirBrowser
           path={browsePath}
           onNavigate={setBrowsePath}
           onSelect={handlePickDir}
           onClose={() => { setBrowsePath(null); setBrowseField(null) }}
-        />
+        />,
+        document.body,
       )}
     </div>
   )
