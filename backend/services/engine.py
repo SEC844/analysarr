@@ -13,13 +13,14 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Optional
 
 from ..config import load_config
 from ..models.schemas import (
     MediaItem, MediaSource, MediaType, SeedStatus,
     FileMetadata, QbitTorrent, ScanStatus, GlobalStats,
-    RadarrMovie, SonarrSeries,
+    RadarrMovie, SonarrSeries, UnmatchedTorrent,
 )
 from .radarr import RadarrClient
 from .sonarr import SonarrClient
@@ -29,7 +30,29 @@ from .identifier import resolve_imdb_from_torrent
 
 logger = logging.getLogger(__name__)
 
-AUTO_SCAN_INTERVAL = 300  # secondes (5 min)
+AUTO_SCAN_INTERVAL    = 300  # secondes (5 min)
+TORRENT_REFRESH_SECS  = 30   # refresh léger qBit uniquement
+QBIT_SEEDING_STATES   = frozenset(["seeding","stalledUP","forcedUP","queuedUP","uploading","checkingUP"])
+
+# Candidats pour l'auto-détection du répertoire torrents
+_TORRENTS_CANDIDATES = [
+    "/data/torrents",
+    "/data/complete",
+    "/data/downloads/complete",
+    "/data/downloads",
+]
+_CROSSSEED_CANDIDATES = ["/data/cross-seed", "/data/crossseed"]
+
+
+def _resolve_path(configured: str, candidates: list[str]) -> str:
+    """Retourne le chemin configuré s'il existe, sinon le premier candidat valide."""
+    if Path(configured).is_dir():
+        return configured
+    for c in candidates:
+        if Path(c).is_dir():
+            logger.warning("Chemin '%s' introuvable — fallback sur '%s'", configured, c)
+            return c
+    return configured  # laisse la valeur pour que l'UI l'affiche
 
 
 class ScanEngine:
@@ -38,14 +61,27 @@ class ScanEngine:
         self._scan_status = ScanStatus()
         self._lock: Optional[asyncio.Lock] = None
         self._bg_task: Optional[asyncio.Task] = None
-        # Incrémental : dict path → size pour détecter les changements
+        self._torrent_task: Optional[asyncio.Task] = None
         self._prev_file_sizes: dict[str, int] = {}
+
+        # Cache léger torrents (mis à jour toutes les 30 s indépendamment du scan)
+        self._qbit_torrents: list[QbitTorrent] = []
+        self._qbit_cache_ts: float = 0.0
+        self._unmatched: list[UnmatchedTorrent] = []
 
     def _get_lock(self) -> asyncio.Lock:
         """Crée le lock lazily dans l'event loop courant."""
         if self._lock is None:
             self._lock = asyncio.Lock()
         return self._lock
+
+    # ── Accès cache torrents ──────────────────────────────────────────────────
+
+    def get_torrents(self) -> list[QbitTorrent]:
+        return self._qbit_torrents
+
+    def get_unmatched(self) -> list[UnmatchedTorrent]:
+        return self._unmatched
 
     # ── Accès cache ───────────────────────────────────────────────────────────
 
@@ -90,9 +126,11 @@ class ScanEngine:
 
         try:
             cfg = load_config()
-            torrents_dir  = cfg.paths.torrents
-            crossseed_dir = cfg.paths.crossseed if cfg.crossseed.enabled else None
-            media_path    = cfg.paths.media
+
+            # ── Résolution des chemins avec fallback auto-détection ───────────
+            torrents_dir  = _resolve_path(cfg.paths.torrents, _TORRENTS_CANDIDATES)
+            crossseed_cfg = _resolve_path(cfg.paths.crossseed, _CROSSSEED_CANDIDATES)
+            crossseed_dir = crossseed_cfg if cfg.crossseed.enabled and Path(crossseed_cfg).is_dir() else None
 
             # ── Fetch en parallèle ────────────────────────────────────────────
             radarr_client = RadarrClient(cfg.radarr.url, cfg.radarr.api_key) if cfg.radarr.url else None
@@ -124,6 +162,11 @@ class ScanEngine:
             if isinstance(results[2], Exception):
                 logger.error("qBittorrent fetch failed: %s", results[2])
 
+            # Mettre à jour le cache torrents immédiatement
+            if qbit_torrents:
+                self._qbit_torrents = qbit_torrents
+                self._qbit_cache_ts = time.time()
+
             total = len(movies) + len(series)
             self._scan_status.total_items = total
             scanned = 0
@@ -153,9 +196,16 @@ class ScanEngine:
                 self._scan_status.scanned = scanned
                 self._scan_status.progress = scanned / total if total else 1.0
 
+            # ── Torrents non matchés ──────────────────────────────────────────
+            matched_hashes_set = {t.hash.lower() for item in new_items for t in item.matched_torrents}
+            unmatched_raw = [t for t in qbit_torrents if t.hash.lower() not in matched_hashes_set]
+
+            # Résolution IMDB en background (best-effort, non bloquant)
+            asyncio.create_task(self._resolve_unmatched(unmatched_raw, radarr_client, sonarr_client))
+
             self._cache = new_items
             elapsed = time.time() - start
-            logger.info("Scan finished in %.1fs — %d items", elapsed, len(new_items))
+            logger.info("Scan finished in %.1fs — %d items, %d unmatched", elapsed, len(new_items), len(unmatched_raw))
 
         except Exception as e:
             logger.exception("Scan failed: %s", e)
@@ -311,12 +361,46 @@ class ScanEngine:
                 return f"/api/poster/{source}/{media_id}"
         return None
 
+    async def _resolve_unmatched(
+        self,
+        torrents: list[QbitTorrent],
+        radarr_client,
+        sonarr_client,
+    ) -> None:
+        """Résout les IMDB des torrents non matchés en arrière-plan (best-effort)."""
+        results: list[UnmatchedTorrent] = []
+        batch_size = 8
+        for i in range(0, len(torrents), batch_size):
+            batch = torrents[i:i + batch_size]
+            try:
+                resolved = await asyncio.gather(
+                    *[resolve_imdb_from_torrent(t.name, radarr_client, sonarr_client) for t in batch],
+                    return_exceptions=True,
+                )
+                for t, res in zip(batch, resolved):
+                    if isinstance(res, Exception):
+                        results.append(UnmatchedTorrent(torrent=t))
+                    else:
+                        imdb_id, guessed_title, guessed_year = res
+                        results.append(UnmatchedTorrent(
+                            torrent=t,
+                            guessed_title=guessed_title,
+                            guessed_year=guessed_year,
+                            imdb_id=imdb_id,
+                        ))
+            except Exception as e:
+                logger.warning("Unmatched resolution batch error: %s", e)
+                results.extend(UnmatchedTorrent(torrent=t) for t in batch)
+        self._unmatched = results
+        logger.info("Unmatched resolution done: %d torrents", len(results))
+
     # ── Background refresh ────────────────────────────────────────────────────
 
     def start_background_scan(self) -> None:
         if self._bg_task and not self._bg_task.done():
             return
         self._bg_task = asyncio.create_task(self._bg_loop())
+        self._torrent_task = asyncio.create_task(self._torrent_refresh_loop())
 
     async def _bg_loop(self) -> None:
         while True:
@@ -329,17 +413,28 @@ class ScanEngine:
             except Exception as e:
                 logger.error("Background scan error: %s", e)
 
-    def get_unmatched_torrents(self) -> list[QbitTorrent]:
-        """Torrents non associés à aucun média."""
-        matched: set[str] = set()
-        for item in self._cache:
-            for t in item.matched_torrents:
-                matched.add(t.hash)
-
-        # On doit conserver les torrents du dernier scan
-        # Ils ne sont pas stockés séparément ici, donc retourner liste vide
-        # (sera enrichi dans la route /api/torrents/unmatched)
-        return []
+    async def _torrent_refresh_loop(self) -> None:
+        """Refresh léger : récupère uniquement la liste qBit toutes les 30 s."""
+        while True:
+            try:
+                await asyncio.sleep(TORRENT_REFRESH_SECS)
+                if self._scan_status.running:
+                    continue  # le scan full s'en charge
+                cfg = load_config()
+                if not cfg.qbittorrent.url:
+                    continue
+                client = QBittorrentClient(
+                    cfg.qbittorrent.url,
+                    cfg.qbittorrent.username,
+                    cfg.qbittorrent.password,
+                )
+                torrents = await client.get_torrents()
+                self._qbit_torrents = torrents
+                self._qbit_cache_ts = time.time()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Torrent refresh error (non-fatal): %s", e)
 
 
 # ── Singleton global ──────────────────────────────────────────────────────────

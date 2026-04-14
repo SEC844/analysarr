@@ -51,7 +51,10 @@ export default function Settings() {
 
   const handleBrowse = (field: string, currentPath: string) => {
     setBrowseField(field)
-    setBrowsePath(currentPath || '/')
+    // Toujours démarrer depuis la racine du chemin configuré
+    // ou depuis '/' si le chemin n'est pas absolu / vide
+    const start = currentPath && currentPath.startsWith('/') ? currentPath : '/'
+    setBrowsePath(start)
   }
 
   const handlePickDir = (path: string) => {
@@ -175,9 +178,9 @@ export default function Settings() {
         </p>
 
         {([
-          { key: 'media',     label: '/media (bibliothèque Radarr/Sonarr)' },
-          { key: 'torrents',  label: '/data/torrents (fichiers qBittorrent)' },
-          { key: 'crossseed', label: '/data/cross-seed (optionnel)' },
+          { key: 'media',     label: 'Bibliothèque (Radarr / Sonarr)' },
+          { key: 'torrents',  label: 'Dossier torrents (qBittorrent)' },
+          { key: 'crossseed', label: 'Dossier cross-seed (optionnel)' },
         ] as const).map(({ key, label }) => (
           <div key={key}>
             <label className="block text-xs text-zinc-500 mb-1">{label}</label>
@@ -244,51 +247,67 @@ function DirBrowser({
   onSelect: (p: string) => void
   onClose: () => void
 }) {
-  const { data, isLoading } = useBrowse(path)
+  const { data, isLoading, isError } = useBrowse(path)
+
+  const goUp = () => {
+    const parent = path.split('/').slice(0, -1).join('/') || '/'
+    onNavigate(parent)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <code className="text-sm text-zinc-300 truncate">{path}</code>
-          <button onClick={onClose} className="text-zinc-500 hover:text-white">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3 gap-2">
+          {path !== '/' && (
+            <button onClick={goUp} className="text-zinc-400 hover:text-white shrink-0 text-sm">
+              ← Retour
+            </button>
+          )}
+          <code className="flex-1 text-xs text-zinc-400 truncate text-right">{path}</code>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white shrink-0 ml-2">
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="max-h-64 overflow-y-auto py-1">
+        {/* Contenu */}
+        <div className="max-h-72 overflow-y-auto py-1">
           {isLoading ? (
-            <div className="py-8 text-center">
+            <div className="py-10 text-center">
               <Loader2 className="mx-auto h-5 w-5 animate-spin text-zinc-600" />
             </div>
-          ) : (
-            <>
+          ) : isError ? (
+            <div className="py-10 text-center space-y-2">
+              <p className="text-xs text-red-400">Dossier inaccessible</p>
               {path !== '/' && (
-                <button
-                  onClick={() => onNavigate(path.split('/').slice(0, -1).join('/') || '/')}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
-                >
-                  ← ..
+                <button onClick={goUp} className="text-xs text-zinc-500 hover:text-zinc-300 underline">
+                  Remonter d'un niveau
                 </button>
               )}
-              {data?.dirs.map(d => (
-                <button
-                  key={d.path}
-                  onClick={() => onNavigate(d.path)}
-                  className="flex w-full items-center justify-between gap-2 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
-                >
-                  <span className="flex items-center gap-2">
-                    <FolderOpen className="h-3.5 w-3.5 text-zinc-500" />
-                    {d.name}
-                  </span>
-                  <ChevronRight className="h-3.5 w-3.5 text-zinc-600" />
-                </button>
-              ))}
-            </>
+            </div>
+          ) : (data?.dirs.length ?? 0) === 0 ? (
+            <p className="py-8 text-center text-xs text-zinc-600">Dossier vide</p>
+          ) : (
+            data?.dirs.map(d => (
+              <button
+                key={d.path}
+                onClick={() => onNavigate(d.path)}
+                className="flex w-full items-center justify-between gap-2 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
+              >
+                <span className="flex items-center gap-2">
+                  <FolderOpen className="h-3.5 w-3.5 text-zinc-500" />
+                  {d.name}
+                </span>
+                <ChevronRight className="h-3.5 w-3.5 text-zinc-600" />
+              </button>
+            ))
           )}
         </div>
 
-        <div className="border-t border-zinc-800 p-3">
+        {/* Footer */}
+        <div className="border-t border-zinc-800 p-3 space-y-2">
+          <p className="text-[10px] text-zinc-600 text-center truncate">{path}</p>
           <button
             onClick={() => onSelect(path)}
             className="w-full rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700"
