@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { MediaItem, GlobalStats, ScanStatus, AppConfig, AppConfigPublic, PathsConfig, ConnectionTestResult, UnmatchedTorrent, QbitTorrent } from '../types'
+import type { MediaItem, GlobalStats, ScanStatus, AppConfig, AppConfigPublic, PathsConfig, ConnectionTestResult, UnmatchedTorrent, TorrentWithMedia } from '../types'
 import type { MediaListItem } from '../types'
 
 const API = '/api'
@@ -116,10 +116,11 @@ export function useTestConnection() {
 // ── Torrents ──────────────────────────────────────────────────────────────────
 
 export function useTorrents() {
-  return useQuery<QbitTorrent[]>({
+  return useQuery<TorrentWithMedia[]>({
     queryKey: ['torrents'],
     queryFn: () => fetch(`${API}/torrents`).then(r => r.json()),
     refetchInterval: 30_000,
+    staleTime: 30_000,
   })
 }
 
@@ -148,7 +149,10 @@ export function useMapTorrent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ media_id }),
       }).then(r => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['torrents-unmatched'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['torrents'] })
+      qc.invalidateQueries({ queryKey: ['torrents-unmatched'] })
+    },
   })
 }
 
@@ -157,7 +161,10 @@ export function useUnmapTorrent() {
   return useMutation<unknown, Error, string>({
     mutationFn: (hash: string) =>
       fetch(`${API}/torrents/${hash}/map`, { method: 'DELETE' }).then(r => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['torrents-unmatched'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['torrents'] })
+      qc.invalidateQueries({ queryKey: ['torrents-unmatched'] })
+    },
   })
 }
 

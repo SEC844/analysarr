@@ -60,9 +60,24 @@ export interface MediaItem {
   torrents_files:   FileMetadata[]   // hardlinks (même inode)
   duplicate_files:  FileMetadata[]   // copies (même taille, inode différent)
   crossseed_files:  FileMetadata[]
-  matched_torrents: QbitTorrent[]
+  matched_torrents:   QbitTorrent[]   // hardlinks (même fichier physique)
+  duplicate_torrents: QbitTorrent[]   // même film, fichier différent (autre qualité)
 
   episode_file_count: number
+}
+
+export interface TorrentWithMedia {
+  torrent:       QbitTorrent
+  media_id:      string | null
+  media_title:   string | null
+  media_year:    number | null
+  media_imdb:    string | null
+  media_poster:  string | null
+  is_duplicate:  boolean
+  suggested_media_id: string | null
+  guessed_title: string | null
+  guessed_year:  number | null
+  manual_media_id: string | null
 }
 
 export interface GlobalStats {

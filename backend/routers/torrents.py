@@ -4,36 +4,37 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..config import load_config
-from ..models.schemas import QbitTorrent, UnmatchedTorrent, MapRequest
+from ..models.schemas import QbitTorrent, UnmatchedTorrent, MapRequest, TorrentWithMedia
 from ..services.qbittorrent import QBittorrentClient
 from ..services.engine import engine
 
 router = APIRouter(prefix="/torrents", tags=["torrents"])
 
 
-@router.get("", response_model=list[QbitTorrent])
+@router.get("", response_model=list[TorrentWithMedia])
 async def list_torrents():
     """
-    Liste tous les torrents qBittorrent.
+    Liste tous les torrents qBittorrent enrichis avec les infos du média associé.
     Retourne depuis le cache de l'engine (rafraîchi toutes les 30 s).
     Si le cache est vide, fait un appel live et met à jour le cache.
     """
-    cached = engine.get_torrents()
-    if cached:
-        return cached
+    import time as _time
 
-    # Cache vide (premier appel avant le scan) → fetch live
-    cfg = load_config()
-    if not cfg.qbittorrent.url:
-        return []
-    client = QBittorrentClient(cfg.qbittorrent.url, cfg.qbittorrent.username, cfg.qbittorrent.password)
-    try:
-        torrents = await client.get_torrents()
-        engine._qbit_torrents = torrents
-        engine._qbit_cache_ts = __import__('time').time()
-        return torrents
-    except Exception:
-        return []
+    cached = engine.get_torrents()
+    if not cached:
+        # Cache vide (premier appel avant le scan) → fetch live
+        cfg = load_config()
+        if not cfg.qbittorrent.url:
+            return []
+        client = QBittorrentClient(cfg.qbittorrent.url, cfg.qbittorrent.username, cfg.qbittorrent.password)
+        try:
+            torrents = await client.get_torrents()
+            engine._qbit_torrents = torrents
+            engine._qbit_cache_ts = _time.time()
+        except Exception:
+            return []
+
+    return engine.get_enriched_torrents()
 
 
 @router.get("/unmatched", response_model=list[UnmatchedTorrent])

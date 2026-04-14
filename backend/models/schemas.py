@@ -168,8 +168,10 @@ class MediaItem(BaseModel):
     duplicate_files:  list[FileMetadata] = Field(default_factory=list)   # copies (même taille, inode différent)
     crossseed_files:  list[FileMetadata] = Field(default_factory=list)
 
-    # Torrents qBit associés
-    matched_torrents: list[QbitTorrent] = Field(default_factory=list)
+    # Torrents qBit associés (hardlinked = même fichier physique)
+    matched_torrents:   list[QbitTorrent] = Field(default_factory=list)
+    # Torrents associés par nom mais fichier DIFFÉRENT (autre qualité, autre encode)
+    duplicate_torrents: list[QbitTorrent] = Field(default_factory=list)
 
     # Pour les séries : nombre de fichiers épisodes
     episode_file_count: int = 0
@@ -211,3 +213,19 @@ class UnmatchedTorrent(BaseModel):
 
 class MapRequest(BaseModel):
     media_id: str  # "radarr_123" ou "sonarr_456"
+
+
+class TorrentWithMedia(BaseModel):
+    """Torrent qBit enrichi avec les informations du média associé."""
+    torrent:       QbitTorrent
+    media_id:      Optional[str] = None   # "radarr_123" ou "sonarr_456"
+    media_title:   Optional[str] = None
+    media_year:    Optional[int] = None
+    media_imdb:    Optional[str] = None
+    media_poster:  Optional[str] = None   # URL du poster proxié
+    is_duplicate:  bool = False           # True = même film mais fichier différent
+    # Pour les torrents non matchés
+    suggested_media_id: Optional[str] = None
+    guessed_title:      Optional[str] = None
+    guessed_year:       Optional[int] = None
+    manual_media_id:    Optional[str] = None

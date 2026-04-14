@@ -97,6 +97,26 @@ def get_file_metadata(path: str) -> FileMetadata:
         return FileMetadata(path=path, exists=False)
 
 
+def _torrent_is_hardlinked(torrent: QbitTorrent, hardlink_paths: set[str]) -> bool:
+    """
+    Retourne True si le contenu du torrent contient au moins un hardlink
+    du fichier de référence.
+
+    Ex: content_path = /data/torrents/complete/Avatar.2160p.mkv
+        hardlink_paths = {/data/torrents/complete/Avatar.2160p.mkv, /data/cross-seed/...}
+        → True (le fichier de référence SE TROUVE dans ce torrent)
+    """
+    if not hardlink_paths:
+        return False
+    content = (torrent.content_path or "").rstrip("/")
+    if not content:
+        return False
+    for hpath in hardlink_paths:
+        if hpath == content or hpath.startswith(content + "/"):
+            return True
+    return False
+
+
 def _match_torrent_to_files(torrent: QbitTorrent, file_paths: set[str]) -> bool:
     """
     Vérifie si un torrent correspond à un des fichiers trouvés par path overlap.
@@ -197,16 +217,25 @@ def classify_media_file(
         if t.state in QBIT_SEEDING_STATES and _match_torrent_to_files(t, all_paths)
     ]
 
+    # Séparer les torrents :
+    #   matched_hl  = torrents dont le contenu EST le fichier de référence (hardlinked)
+    #   matched_dup = torrents associés par nom/chemin mais avec un FICHIER DIFFÉRENT
+    #                 (autre qualité, autre encode — même film, copie physique distincte)
+    hardlink_paths = {f.path for f in torrent_hardlinks + crossseed_files}
+    matched_hl:  list[QbitTorrent] = [t for t in matched_qbit if _torrent_is_hardlinked(t, hardlink_paths)]
+    matched_dup: list[QbitTorrent] = [t for t in matched_qbit if not _torrent_is_hardlinked(t, hardlink_paths)]
+
     # 5. Drapeaux et classification
     #
     # Règles hardlink :
     #   - Un fichier est hardlinké si son inode se trouve dans /torrents OU dans /crossseed
-    #   - On est "en seed" si qBit a un torrent actif OU si crossseed a le fichier
-    #   - Un doublon = même taille, inode DIFFÉRENT (copie physique distincte), et PAS hardlinké
+    #   - On est "en seed" si qBit a un torrent hardlinké actif OU si crossseed a le fichier
+    #   - is_duplicate (flag) = copies physiques identiques (même taille, inode différent)
+    #                         OU versions alternatives du même film (duplicate_torrents non vides)
     is_cross_seeded = len(crossseed_files) > 0
-    is_hardlinked   = len(torrent_hardlinks) > 0 or is_cross_seeded   # même inode = hardlink
-    is_seeding      = len(matched_qbit) > 0 or is_cross_seeded        # seedé via qBit ou crossseed
-    is_duplicate    = len(torrent_same_size) > 0 and not is_hardlinked
+    is_hardlinked   = len(torrent_hardlinks) > 0 or is_cross_seeded      # même inode = hardlink
+    is_seeding      = len(matched_hl) > 0 or is_cross_seeded             # reference file seedée
+    is_duplicate    = (len(torrent_same_size) > 0 and not is_hardlinked) or len(matched_dup) > 0
 
     if not is_seeding:
         status = SeedStatus.NOT_SEEDING
@@ -214,18 +243,19 @@ def classify_media_file(
         status = SeedStatus.SEED_OK
     elif is_hardlinked:
         status = SeedStatus.SEED_NO_CS
-    elif is_duplicate:
+    elif len(torrent_same_size) > 0 and not is_hardlinked:
         status = SeedStatus.SEED_DUPLICATE
     else:
         status = SeedStatus.SEED_NOT_HARDLINK
 
     return {
-        "seed_status":     status,
-        "torrents_files":  torrent_hardlinks,        # hardlinks uniquement (inode identique)
-        "duplicate_files": torrent_same_size,        # copies (même taille, inode différent)
-        "crossseed_files": crossseed_files,
-        "matched_torrents": matched_qbit,
-        "is_hardlinked":   is_hardlinked,
-        "is_cross_seeded": is_cross_seeded,
-        "is_duplicate":    is_duplicate,
+        "seed_status":        status,
+        "torrents_files":     torrent_hardlinks,   # hardlinks (inode identique)
+        "duplicate_files":    torrent_same_size,   # copies physiques (même taille, inode différent)
+        "crossseed_files":    crossseed_files,
+        "matched_torrents":   matched_hl,          # torrents dont le contenu est hardlinké
+        "duplicate_torrents": matched_dup,         # même film, fichier différent (autre qualité)
+        "is_hardlinked":      is_hardlinked,
+        "is_cross_seeded":    is_cross_seeded,
+        "is_duplicate":       is_duplicate,
     }

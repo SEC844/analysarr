@@ -20,7 +20,7 @@ from ..config import load_config
 from ..models.schemas import (
     MediaItem, MediaSource, MediaType, SeedStatus,
     FileMetadata, QbitTorrent, ScanStatus, GlobalStats,
-    RadarrMovie, SonarrSeries, UnmatchedTorrent,
+    RadarrMovie, SonarrSeries, UnmatchedTorrent, TorrentWithMedia,
 )
 from .radarr import RadarrClient
 from .sonarr import SonarrClient
@@ -76,6 +76,9 @@ class ScanEngine:
         # Mappings manuels : hash qBit → media_id ("radarr_123")
         self._manual_mappings: dict[str, str] = {}
 
+        # Reverse lookup : hash → infos média (pour enrichir la liste des torrents)
+        self._hash_to_media: dict[str, dict] = {}
+
     def _get_lock(self) -> asyncio.Lock:
         """Crée le lock lazily dans l'event loop courant."""
         if self._lock is None:
@@ -121,6 +124,50 @@ class ScanEngine:
                 "imdb_id": s.imdb_id,
             })
         return sorted(result, key=lambda x: x["title"].lower())
+
+    def get_enriched_torrents(self) -> list[TorrentWithMedia]:
+        """
+        Retourne tous les torrents qBit enrichis avec les infos du média associé.
+        Fusionne le cache _hash_to_media (scan) + mappings manuels + suggestions unmatched.
+        """
+        unmatched_by_hash: dict[str, UnmatchedTorrent] = {
+            u.torrent.hash.lower(): u for u in self._unmatched
+        }
+
+        result: list[TorrentWithMedia] = []
+        for t in self._qbit_torrents:
+            h = t.hash.lower()
+            manual = self._manual_mappings.get(h)
+            info = self._hash_to_media.get(h)
+
+            if info:
+                # Torrent associé via scan (hardlink ou doublon)
+                result.append(TorrentWithMedia(
+                    torrent=t,
+                    media_id=manual or info["media_id"],
+                    media_title=info["media_title"],
+                    media_year=info["media_year"],
+                    media_imdb=info["media_imdb"],
+                    media_poster=info["media_poster"],
+                    is_duplicate=info["is_duplicate"],
+                    manual_media_id=manual,
+                ))
+            elif h in unmatched_by_hash:
+                # Torrent non associé via scan — données de la phase de résolution
+                u = unmatched_by_hash[h]
+                result.append(TorrentWithMedia(
+                    torrent=t,
+                    media_id=manual,
+                    suggested_media_id=u.suggested_media_id,
+                    guessed_title=u.guessed_title,
+                    guessed_year=u.guessed_year,
+                    media_imdb=u.imdb_id,
+                    manual_media_id=manual,
+                ))
+            else:
+                result.append(TorrentWithMedia(torrent=t, manual_media_id=manual))
+
+        return result
 
     # ── Accès cache ───────────────────────────────────────────────────────────
 
@@ -250,8 +297,28 @@ class ScanEngine:
                 self._scan_status.scanned = scanned
                 self._scan_status.progress = scanned / total if total else 1.0
 
+            # ── Reverse lookup hash → média ───────────────────────────────────
+            new_hash_to_media: dict[str, dict] = {}
+            for item in new_items:
+                _info_base = {
+                    "media_id":    item.id,
+                    "media_title": item.title,
+                    "media_year":  item.year,
+                    "media_imdb":  item.imdb_id,
+                    "media_poster": item.poster_url,
+                }
+                for t in item.matched_torrents:
+                    new_hash_to_media[t.hash.lower()] = {**_info_base, "is_duplicate": False}
+                for t in item.duplicate_torrents:
+                    new_hash_to_media[t.hash.lower()] = {**_info_base, "is_duplicate": True}
+            self._hash_to_media = new_hash_to_media
+
             # ── Torrents non matchés ──────────────────────────────────────────
-            matched_hashes_set = {t.hash.lower() for item in new_items for t in item.matched_torrents}
+            matched_hashes_set = {
+                t.hash.lower()
+                for item in new_items
+                for t in item.matched_torrents + item.duplicate_torrents
+            }
             unmatched_raw = [t for t in qbit_torrents if t.hash.lower() not in matched_hashes_set]
 
             # Résolution IMDB en background (best-effort, non bloquant)
@@ -303,16 +370,17 @@ class ScanEngine:
         # Classification O(1) via index
         result = classify_media_file(media_file, torrent_index, crossseed_index, qbit_torrents)
 
-        item.seed_status      = result["seed_status"]
-        item.is_hardlinked    = result["is_hardlinked"]
-        item.is_cross_seeded  = result["is_cross_seeded"]
-        item.is_duplicate     = result["is_duplicate"]
-        item.torrents_files   = result["torrents_files"]
-        item.duplicate_files  = result["duplicate_files"]
-        item.crossseed_files  = result["crossseed_files"]
-        item.matched_torrents = result["matched_torrents"]
+        item.seed_status        = result["seed_status"]
+        item.is_hardlinked      = result["is_hardlinked"]
+        item.is_cross_seeded    = result["is_cross_seeded"]
+        item.is_duplicate       = result["is_duplicate"]
+        item.torrents_files     = result["torrents_files"]
+        item.duplicate_files    = result["duplicate_files"]
+        item.crossseed_files    = result["crossseed_files"]
+        item.matched_torrents   = result["matched_torrents"]
+        item.duplicate_torrents = result["duplicate_torrents"]
 
-        for t in result["matched_torrents"]:
+        for t in result["matched_torrents"] + result["duplicate_torrents"]:
             matched_hashes.add(t.hash)
 
         return item
@@ -357,16 +425,17 @@ class ScanEngine:
         # Classification O(1) via index
         result = classify_media_file(largest, torrent_index, crossseed_index, qbit_torrents)
 
-        item.seed_status      = result["seed_status"]
-        item.is_hardlinked    = result["is_hardlinked"]
-        item.is_cross_seeded  = result["is_cross_seeded"]
-        item.is_duplicate     = result["is_duplicate"]
-        item.torrents_files   = result["torrents_files"]
-        item.duplicate_files  = result["duplicate_files"]
-        item.crossseed_files  = result["crossseed_files"]
-        item.matched_torrents = result["matched_torrents"]
+        item.seed_status        = result["seed_status"]
+        item.is_hardlinked      = result["is_hardlinked"]
+        item.is_cross_seeded    = result["is_cross_seeded"]
+        item.is_duplicate       = result["is_duplicate"]
+        item.torrents_files     = result["torrents_files"]
+        item.duplicate_files    = result["duplicate_files"]
+        item.crossseed_files    = result["crossseed_files"]
+        item.matched_torrents   = result["matched_torrents"]
+        item.duplicate_torrents = result["duplicate_torrents"]
 
-        for t in result["matched_torrents"]:
+        for t in result["matched_torrents"] + result["duplicate_torrents"]:
             matched_hashes.add(t.hash)
 
         return item

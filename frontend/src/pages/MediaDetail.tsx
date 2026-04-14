@@ -133,25 +133,40 @@ export default function MediaDetail() {
         </Section>
       )}
 
-      {/* Doublons — uniquement si des copies physiques distinctes sont détectées */}
-      {item.is_duplicate && item.duplicate_files.length > 0 && (
-        <Section title={`Doublons détectés (${item.duplicate_files.length})`} warning>
-          <p className="mb-2 text-xs text-amber-400/80">
-            Ces fichiers ont la même taille que le fichier de référence mais un inode différent —
-            ce sont des copies physiques distinctes (pas des hardlinks).
-          </p>
-          <div className="space-y-1.5">
-            {item.duplicate_files.map((f, i) => (
-              <FileRow key={i} file={f} accent="amber" />
-            ))}
-          </div>
+      {/* Doublons — copies physiques (même taille, inode différent) ET autres versions */}
+      {item.is_duplicate && (item.duplicate_files.length > 0 || item.duplicate_torrents.length > 0) && (
+        <Section title={`Doublons détectés (${item.duplicate_files.length + item.duplicate_torrents.length})`} warning>
+          {item.duplicate_files.length > 0 && (
+            <>
+              <p className="mb-2 text-xs text-amber-400/80">
+                Copies physiques — même taille que le fichier de référence, inode différent (pas un hardlink).
+              </p>
+              <div className="space-y-1.5">
+                {item.duplicate_files.map((f, i) => (
+                  <FileRow key={`df-${i}`} file={f} accent="amber" />
+                ))}
+              </div>
+            </>
+          )}
+          {item.duplicate_torrents.length > 0 && (
+            <>
+              <p className={cn('text-xs text-amber-400/80', item.duplicate_files.length > 0 && 'mt-3')}>
+                Autres versions (même film, fichier différent — autre qualité ou encode).
+              </p>
+              <div className="mt-2 space-y-2.5">
+                {item.duplicate_torrents.map(t => (
+                  <TorrentRow key={t.hash} torrent={t} />
+                ))}
+              </div>
+            </>
+          )}
         </Section>
       )}
 
-      {/* Torrents qBit */}
+      {/* Torrents qBit — hardlinks uniquement */}
       <Section title={`Torrents qBittorrent (${item.matched_torrents.length})`}>
         {item.matched_torrents.length === 0 ? (
-          <Empty text="Aucun torrent associé" />
+          <Empty text="Aucun torrent associé en hardlink" />
         ) : (
           <div className="space-y-2.5">
             {item.matched_torrents.map(t => (
