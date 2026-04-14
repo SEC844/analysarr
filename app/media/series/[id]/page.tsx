@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Tv2, ExternalLink, HardDrive, Shuffle, Upload, AlertTriangle } from 'lucide-react';
-import { SeedBadge, HardlinkBadge, TypeBadge, CrossSeedBadge } from '@/components/StatusBadge';
+import { SeedStatusBadge, HardlinkBadge, TypeBadge, CrossSeedBadge } from '@/components/StatusBadge';
 import { formatBytes, formatSpeed, formatEta, cn, isCrossSeed } from '@/lib/utils';
 import type { EnrichedMedia, SonarrSeries } from '@/lib/types';
 import type { SonarrEpisodeFile } from '@/lib/sonarr';
@@ -125,7 +125,7 @@ export default function SeriesDetailPage() {
           </div>
           <div className="flex flex-wrap gap-1.5">
             <TypeBadge type="series" />
-            <SeedBadge status={media.seedingStatus} />
+            <SeedStatusBadge status={media.seedStatus} />
             {media.hardlinkStatus !== 'unknown' && <HardlinkBadge status={media.hardlinkStatus} />}
             <CrossSeedBadge count={media.crossSeedCount} />
           </div>

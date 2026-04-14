@@ -118,6 +118,37 @@ export type MediaType = 'movie' | 'series';
 export type SeedingStatus = 'seeding' | 'not_seeding' | 'unknown';
 export type HardlinkStatus = 'hardlinked' | 'not_hardlinked' | 'unknown';
 
+/**
+ * Fine-grained seed classification based on inode + nlink analysis.
+ *
+ * seed_ok          → qBit active + /media inode == /data inode + nlink >= 3 (hardlink + cross-seed)
+ * seed_no_cs       → qBit active + /media inode == /data inode + nlink == 2 (hardlink, no cross-seed)
+ * seed_not_hardlink→ qBit active + /media inode != /data inode (physical copy, not hardlinked)
+ * seed_duplicate   → qBit active + /data has file with same exact size but different inode
+ * not_seeding      → not in qBit with active state, or file only present in /media
+ */
+export type SeedStatus =
+  | 'seed_ok'
+  | 'seed_no_cs'
+  | 'seed_not_hardlink'
+  | 'seed_duplicate'
+  | 'not_seeding';
+
+export interface FileInfo {
+  path: string;
+  inode: bigint;
+  nlink: number;
+  size: bigint;
+}
+
+export interface SeedStatusDetails {
+  mediaInode: bigint | null;
+  dataInode: bigint | null;
+  nlink: number;
+  qbitState: string | null;
+  duplicateCount: number;
+}
+
 export interface EnrichedMedia {
   id: number;
   type: MediaType;
@@ -126,6 +157,9 @@ export interface EnrichedMedia {
   posterUrl: string | null;
   seedingStatus: SeedingStatus;
   hardlinkStatus: HardlinkStatus;
+  /** Fine-grained inode-based seed classification */
+  seedStatus: SeedStatus;
+  seedStatusDetails?: SeedStatusDetails;
   torrents: QbitTorrent[];
   filePaths: string[];
   episodeSeedingCount?: number; // series only

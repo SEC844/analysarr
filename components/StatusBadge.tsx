@@ -1,7 +1,34 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import type { SeedingStatus, HardlinkStatus, MediaType } from '@/lib/types';
+import type { SeedingStatus, HardlinkStatus, MediaType, SeedStatus } from '@/lib/types';
+
+/* ── SeedStatus (new inode-based badge) ──────────────────────────────────── */
+interface SeedStatusBadgeProps { status: SeedStatus; className?: string; compact?: boolean }
+
+export function SeedStatusBadge({ status, className, compact }: SeedStatusBadgeProps) {
+  const base = compact ? 'px-1.5 py-0 text-[9px]' : 'px-2 py-0.5 text-xs';
+
+  const styles: Record<SeedStatus, { bg: string; dot: string; label: string }> = {
+    seed_ok:           { bg: 'bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-400',   dot: 'bg-green-500 dark:bg-green-400',   label: 'Seed + CS' },
+    seed_no_cs:        { bg: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/60 dark:text-yellow-400', dot: 'bg-yellow-500 dark:bg-yellow-400', label: 'Seed' },
+    seed_not_hardlink: { bg: 'bg-orange-100 text-orange-700 dark:bg-orange-900/60 dark:text-orange-400', dot: 'bg-orange-500 dark:bg-orange-400', label: 'Non hardlink' },
+    seed_duplicate:    { bg: 'bg-red-100 text-red-700 dark:bg-red-900/60 dark:text-red-400',           dot: 'bg-red-500 dark:bg-red-400',       label: 'Doublon' },
+    not_seeding:       { bg: 'bg-gray-100 text-gray-500 dark:bg-zinc-800 dark:text-zinc-400',          dot: 'bg-gray-400 dark:bg-zinc-500',     label: 'Non seedé' },
+  };
+
+  const { bg, dot, label } = styles[status] ?? styles.not_seeding;
+
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full font-medium',
+      base, bg, className
+    )}>
+      <span className={cn('rounded-full', compact ? 'h-1 w-1' : 'h-1.5 w-1.5', dot)} />
+      {label}
+    </span>
+  );
+}
 
 /* ── Seed ─────────────────────────────────────────────────────────────────── */
 interface SeedBadgeProps { status: SeedingStatus; className?: string; compact?: boolean }

@@ -1,5 +1,5 @@
 import { statSync, readdirSync } from 'fs';
-import { join as joinPath } from 'path';
+import { join as joinPath, normalize as normalizePath, basename } from 'path';
 import { loadConfig } from './config';
 import type { PathMapping } from './config';
 import type {
@@ -11,18 +11,22 @@ import type {
   DashboardStats,
   SeedingStatus,
   HardlinkStatus,
+  SeedStatus,
+  SeedStatusDetails,
 } from './types';
+import { scanFile, scanDirectory, collectDirectoryInodes } from './fileScanner';
+import {
+  classifySeedStatus,
+  aggregateSeedStatus,
+  QBIT_SEEDING_STATES,
+} from './seedClassifier';
 
-export const SEEDING_STATES = new Set([
-  'uploading', 'stalledUP', 'checkingUP', 'queuedUP', 'forcedUP',
-]);
+// Re-export for legacy callers
+export const SEEDING_STATES = QBIT_SEEDING_STATES;
 
 // Cross Seed injects torrents into qBittorrent tagged with "cross-seed" (default)
 // but users may configure "crossseed" or "cross_seed" — match all variants.
 const CROSSSEED_TAG_RE = /cross[-_]?seed/i;
-
-// Tolerance for size comparison: two torrents/files within 2% = same version
-const SIZE_TOLERANCE = 0.02;
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -43,18 +47,21 @@ function norm(p: string | undefined): string {
   return (p ?? '').replace(/\\/g, '/');
 }
 
+/**
+ * Robust path overlap using path.normalize + explicit boundary check.
+ * Prevents false matches like /media/foo vs /media/foobar.
+ * Checks if one path IS a subpath of the other (or they are equal).
+ */
 function pathsOverlap(a: string, b: string): boolean {
   if (!a || !b) return false;
-  return a.startsWith(b) || b.startsWith(a);
+  const na = normalizePath(a).replace(/\\/g, '/').replace(/\/+$/, '');
+  const nb = normalizePath(b).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (na === nb) return true;
+  return na.startsWith(nb + '/') || nb.startsWith(na + '/');
 }
 
-// ── Inode helpers (server-side only) ─────────────────────────────────────────
+// ── Inode helpers (legacy — kept for hardlinkStatus backward compat) ──────────
 
-/**
- * IMPORTANT: use { bigint: true } so inode numbers are exact BigInts.
- * Without this, inodes > Number.MAX_SAFE_INTEGER (~9e15) get rounded and
- * different files may appear to share the same inode.
- */
 function safeIno(p: string): bigint | null {
   if (!p) return null;
   try {
@@ -151,7 +158,7 @@ const QUALITY_RE = new RegExp(
 function normalizeName(s: string): string {
   return s
     .toLowerCase()
-    .replace(/\b(19|20)\d{2}\b/g, '')      // strip years ONLY for title comparison
+    .replace(/\b(19|20)\d{2}\b/g, '')      // strip years for title comparison
     .replace(/\bs\d{1,2}(e\d{1,3}(-e?\d{1,3})?)?\b/gi, '')
     .replace(/\bseason\s*\d+\b/gi, '')
     .replace(/\bepisode\s*\d+\b/gi, '')
@@ -168,9 +175,9 @@ function normalizeName(s: string): string {
  * Returns a match score (0 = no match) between a torrent and a media entry.
  *
  * Strategy:
- * 1. Year gate — torrent must contain the release year (avoids Avengers cross-match)
+ * 1. Year gate — torrent must contain the release year (avoids cross-title matches)
  * 2. Token match — every word of the media title must appear in the normalized torrent name
- *    This handles dots/underscores as separators and is robust to word reordering.
+ *    Robust to dots/underscores/dashes as separators and word reordering.
  * 3. Short title fallback — single-word or 2-token titles use substring matching.
  */
 function matchScore(torrentName: string, mediaTitle: string, year: number): number {
@@ -203,13 +210,12 @@ function matchScore(torrentName: string, mediaTitle: string, year: number): numb
 
 function seedingStatus(torrents: QbitTorrent[]): SeedingStatus {
   if (torrents.length === 0) return 'not_seeding';
-  return torrents.some(t => SEEDING_STATES.has(t.state)) ? 'seeding' : 'not_seeding';
+  return torrents.some(t => QBIT_SEEDING_STATES.has(t.state)) ? 'seeding' : 'not_seeding';
 }
 
 function hardlinkStatus(
   rawArrPaths: string[],
   mappedArrPaths: string[],
-  /** Only the canonical torrents (same version as arr file) are checked */
   canonicalTorrents: QbitTorrent[],
   mapFn: (p: string) => string,
 ): HardlinkStatus {
@@ -247,11 +253,14 @@ function computeRatio(torrents: QbitTorrent[]): { totalUploaded: number; totalDo
  *
  * A torrent is "canonical" if:
  *   - It is a cross-seed (any version), OR
- *   - Its size is within SIZE_TOLERANCE of the arr file size, OR
- *   - arrSize is unknown (0) — treat first non-cs torrent as canonical
+ *   - Its size matches the arr file size EXACTLY (0% tolerance), OR
+ *   - arrSize is unknown (0) — treat all non-cs torrents as canonical
  *
  * A torrent is a "duplicate" if it is NOT a cross-seed AND its size differs
- * from the arr file size by more than SIZE_TOLERANCE.
+ * from the arr file size by even 1 byte.
+ *
+ * NOTE: 0% tolerance (was 2%) prevents false negatives on cross-seeds with
+ * slightly different encodes being incorrectly treated as canonical.
  */
 function classifyTorrents(
   matched: QbitTorrent[],
@@ -264,7 +273,7 @@ function classifyTorrents(
   for (const t of matched) {
     const isCS = crossSeedHashes.has(t.hash.toLowerCase());
     if (isCS) {
-      // Cross-seeds always go into canonical regardless of version
+      // Cross-seeds are never duplicates
       canonical.push(t);
       continue;
     }
@@ -273,8 +282,8 @@ function classifyTorrents(
       canonical.push(t);
       continue;
     }
-    const sizeDiff = Math.abs(t.size - arrSize) / arrSize;
-    if (sizeDiff <= SIZE_TOLERANCE) {
+    // Exact size match (0 bytes tolerance)
+    if (t.size === arrSize) {
       canonical.push(t);
     } else {
       duplicates.push(t);
@@ -282,6 +291,163 @@ function classifyTorrents(
   }
 
   return { canonical, duplicates };
+}
+
+// ── SeedStatus computation ────────────────────────────────────────────────────
+
+/**
+ * Compute the SeedStatus for a single media file (movie use case).
+ *
+ * Steps:
+ * 1. Scan the /media file for its FileInfo (inode, nlink, size)
+ * 2. For each canonical torrent, scan /data for files with matching filename
+ * 3. Run classifySeedStatus() with the collected data
+ */
+function computeMovieSeedStatus(
+  mappedFilePath: string,
+  canonicalTorrents: QbitTorrent[],
+  mapFn: (p: string) => string,
+): { status: SeedStatus; details: SeedStatusDetails } {
+  const noResult: { status: SeedStatus; details: SeedStatusDetails } = {
+    status: 'not_seeding',
+    details: { mediaInode: null, dataInode: null, nlink: 0, qbitState: null, duplicateCount: 0 },
+  };
+
+  const mediaFile = scanFile(mappedFilePath);
+  if (!mediaFile) return noResult;
+
+  const filename = basename(mappedFilePath);
+
+  // Collect all candidate data files from canonical torrent paths
+  const dataFiles: ReturnType<typeof scanFile>[] = [];
+  for (const t of canonicalTorrents) {
+    const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
+    if (!tp) continue;
+
+    // Try it as a file first
+    const fileInfo = scanFile(tp);
+    if (fileInfo) {
+      if (basename(tp) === filename) {
+        dataFiles.push(fileInfo);
+      }
+    } else {
+      // It's a directory — scan for the matching filename
+      const found = scanDirectory(tp, filename);
+      dataFiles.push(...found);
+    }
+  }
+
+  const validDataFiles = dataFiles.filter((f): f is NonNullable<typeof f> => f !== null);
+
+  // Find the active seeding torrent's state
+  const activeTorrent = canonicalTorrents.find(t => QBIT_SEEDING_STATES.has(t.state));
+  const isInQbit = canonicalTorrents.length > 0 && activeTorrent !== undefined;
+
+  const status = classifySeedStatus({
+    mediaFile,
+    dataFiles: validDataFiles,
+    isInQbit,
+    qbitState: activeTorrent?.state,
+  });
+
+  const matchedDataFile = validDataFiles.find(df => df.inode === mediaFile.inode);
+  const duplicateDataFiles = validDataFiles.filter(
+    df => df.inode !== mediaFile.inode && df.size === mediaFile.size,
+  );
+
+  return {
+    status,
+    details: {
+      mediaInode: mediaFile.inode,
+      dataInode: matchedDataFile?.inode ?? null,
+      nlink: matchedDataFile?.nlink ?? mediaFile.nlink,
+      qbitState: activeTorrent?.state ?? null,
+      duplicateCount: duplicateDataFiles.length,
+    },
+  };
+}
+
+/**
+ * Compute the SeedStatus for a series (directory-based).
+ *
+ * Samples up to 10 episode files from the show directory and aggregates
+ * their individual statuses into a single representative value.
+ *
+ * Worst-wins aggregation: seed_duplicate > seed_not_hardlink > seed_no_cs > seed_ok > not_seeding
+ */
+function computeSeriesSeedStatus(
+  mappedShowPath: string,
+  canonicalTorrents: QbitTorrent[],
+  mapFn: (p: string) => string,
+): { status: SeedStatus; details: SeedStatusDetails } {
+  const noResult: { status: SeedStatus; details: SeedStatusDetails } = {
+    status: 'not_seeding',
+    details: { mediaInode: null, dataInode: null, nlink: 0, qbitState: null, duplicateCount: 0 },
+  };
+
+  if (!mappedShowPath || canonicalTorrents.length === 0) return noResult;
+
+  const activeTorrent = canonicalTorrents.find(t => QBIT_SEEDING_STATES.has(t.state));
+  const isInQbit = activeTorrent !== undefined;
+
+  if (!isInQbit) return noResult;
+
+  // Collect all media inodes from the show directory (sample up to 50)
+  const mediaInodes = collectDirectoryInodes(mappedShowPath, 50);
+  if (mediaInodes.size === 0) return noResult;
+
+  // Collect all data inodes from all canonical torrent paths (sample up to 50)
+  const dataInodes = new Map<bigint, import('./fileScanner').FileInfo>();
+  for (const t of canonicalTorrents) {
+    const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
+    if (!tp) continue;
+    const torrentInodes = collectDirectoryInodes(tp, 50);
+    for (const [ino, info] of torrentInodes) {
+      dataInodes.set(ino, info);
+    }
+  }
+
+  if (dataInodes.size === 0) return noResult;
+
+  // For each sampled media file, compute its seed status using collected data
+  const perFileStatuses: SeedStatus[] = [];
+  let totalDuplicates = 0;
+
+  for (const [, mediaFile] of mediaInodes) {
+    // Find data files with matching filename for accurate per-file comparison
+    const candidateDataFiles = Array.from(dataInodes.values()).filter(
+      df => basename(df.path) === basename(mediaFile.path),
+    );
+
+    const fileStatus = classifySeedStatus({
+      mediaFile,
+      dataFiles: candidateDataFiles.length > 0 ? candidateDataFiles : Array.from(dataInodes.values()),
+      isInQbit,
+      qbitState: activeTorrent?.state,
+    });
+
+    perFileStatuses.push(fileStatus);
+    if (fileStatus === 'seed_duplicate') totalDuplicates++;
+  }
+
+  const aggregated = aggregateSeedStatus(perFileStatuses);
+
+  // Pick representative details from the first inode-matched pair
+  const firstMediaFile = Array.from(mediaInodes.values())[0];
+  const matchedDataFile = firstMediaFile
+    ? dataInodes.get(firstMediaFile.inode)
+    : undefined;
+
+  return {
+    status: aggregated,
+    details: {
+      mediaInode: firstMediaFile?.inode ?? null,
+      dataInode: matchedDataFile?.inode ?? null,
+      nlink: matchedDataFile?.nlink ?? firstMediaFile?.nlink ?? 0,
+      qbitState: activeTorrent?.state ?? null,
+      duplicateCount: totalDuplicates,
+    },
+  };
 }
 
 // ── Main enrichment ───────────────────────────────────────────────────────────
@@ -340,14 +506,15 @@ export function enrichMedia(
 
     const matchedTorrents = torrents.filter(t => {
       const hash = t.hash.toLowerCase();
-      // 1. Manual link (user-configured)
+      // 1. Manual link (user-configured, highest priority)
       const manual = hist.manual.get(hash);
       if (manual?.type === 'movie' && manual.id === movie.id) return true;
-      // 2. History-based match (most reliable — direct hash from Radarr download history)
+      // 2. History-based match (direct hash from Radarr download history)
       if (hist.movies.get(hash) === movie.id) return true;
-      // 3. Path overlap
+      // 3. Path overlap — content_path must be a subpath of the mapped arr path (or vice versa)
+      //    Uses normalize() + startsWith() with directory boundary check
       const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
-      if (filePaths.some(fp => pathsOverlap(fp, tp))) return true;
+      if (tp && filePaths.some(fp => pathsOverlap(fp, tp))) return true;
       // 4. Year-aware token-based name match (fallback)
       return matchScore(t.name, movie.title, movie.year) > 0;
     });
@@ -358,10 +525,14 @@ export function enrichMedia(
     const { totalUploaded, totalDownloaded, globalRatio } = computeRatio(matchedTorrents);
 
     const seeding  = seedingStatus(matchedTorrents);
-    // Hardlink only checked against canonical torrents (same version as arr file)
     const hardlink = hardlinkStatus(rawFilePaths, filePaths, canonical, mapFn);
     const csCount  = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
     const posterImg = movie.images.find(i => i.coverType === 'poster');
+
+    // Fine-grained seed status (inode-based classification)
+    const { status: seedStatus, details: seedStatusDetails } = mappedFilePath
+      ? computeMovieSeedStatus(mappedFilePath, canonical, mapFn)
+      : { status: 'not_seeding' as SeedStatus, details: { mediaInode: null, dataInode: null, nlink: 0, qbitState: null, duplicateCount: 0 } as SeedStatusDetails };
 
     if (rawFilePath && matchedTorrents.length === 0) {
       issues.push({
@@ -379,11 +550,11 @@ export function enrichMedia(
         mediaType: 'movie',
       });
     }
-    if (hardlink === 'not_hardlinked' && filePaths.length > 0 && canonical.filter(t => !crossSeedHashes.has(t.hash.toLowerCase())).length > 0) {
+    if (seedStatus === 'seed_not_hardlink' && filePaths.length > 0 && canonical.filter(t => !crossSeedHashes.has(t.hash.toLowerCase())).length > 0) {
       issues.push({
         id: `copy-movie-${movie.id}`, type: 'copy_not_hardlink',
         title: movie.title,
-        description: 'Torrent matched but no shared inode — may be a copy instead of a hardlink.',
+        description: 'Torrent matched but no shared inode — file is a copy instead of a hardlink.',
         mediaType: 'movie',
       });
     }
@@ -393,6 +564,7 @@ export function enrichMedia(
       title: movie.title, year: movie.year,
       posterUrl: posterImg ? `/api/poster/radarr/${movie.id}` : null,
       seedingStatus: seeding, hardlinkStatus: hardlink,
+      seedStatus, seedStatusDetails,
       torrents: matchedTorrents, filePaths,
       hasDuplicates: duplicates.length > 0,
       crossSeedCount: csCount,
@@ -417,24 +589,28 @@ export function enrichMedia(
       if (manual?.type === 'series' && manual.id === show.id) return true;
       // 2. History-based match
       if (hist.series.get(hash) === show.id) return true;
-      // 3. Path overlap
+      // 3. Path overlap — torrent content_path must be a subpath of the show path (or vice versa)
       const tp = norm(mapFn(t.content_path ?? t.save_path ?? ''));
-      if (mappedShowPath && pathsOverlap(mappedShowPath, tp)) return true;
+      if (tp && mappedShowPath && pathsOverlap(mappedShowPath, tp)) return true;
       // 4. Name-based fallback
       return matchScore(t.name, show.title, show.year) > 0;
     });
 
     matchedTorrents.forEach(t => matchedHashes.add(t.hash));
 
-    // For series, sizeOnDisk is the total of all episode files — use for classification
     const { canonical, duplicates } = classifyTorrents(matchedTorrents, arrSize, crossSeedHashes);
     const { totalUploaded, totalDownloaded, globalRatio } = computeRatio(matchedTorrents);
 
     const seeding   = seedingStatus(matchedTorrents);
     const hardlink  = hardlinkStatus(rawFilePaths, filePaths, canonical, mapFn);
     const csCount   = matchedTorrents.filter(t => crossSeedHashes.has(t.hash.toLowerCase())).length;
-    const epSeeding = matchedTorrents.filter(t => SEEDING_STATES.has(t.state)).length;
+    const epSeeding = matchedTorrents.filter(t => QBIT_SEEDING_STATES.has(t.state)).length;
     const posterImg = show.images.find(i => i.coverType === 'poster');
+
+    // Fine-grained seed status (directory inode sampling)
+    const { status: seedStatus, details: seedStatusDetails } = mappedShowPath
+      ? computeSeriesSeedStatus(mappedShowPath, canonical, mapFn)
+      : { status: 'not_seeding' as SeedStatus, details: { mediaInode: null, dataInode: null, nlink: 0, qbitState: null, duplicateCount: 0 } as SeedStatusDetails };
 
     if (show.statistics.episodeFileCount > 0 && matchedTorrents.length === 0) {
       issues.push({
@@ -458,6 +634,7 @@ export function enrichMedia(
       title: show.title, year: show.year,
       posterUrl: posterImg ? `/api/poster/sonarr/${show.id}` : null,
       seedingStatus: seeding, hardlinkStatus: hardlink,
+      seedStatus, seedStatusDetails,
       torrents: matchedTorrents, filePaths,
       episodeSeedingCount: epSeeding,
       hasDuplicates: duplicates.length > 0,
@@ -481,7 +658,7 @@ export function enrichMedia(
   }
 
   // ── Stats ───────────────────────────────────────────────────────────────────
-  const seedingTorrents  = torrents.filter(t => SEEDING_STATES.has(t.state));
+  const seedingTorrents  = torrents.filter(t => QBIT_SEEDING_STATES.has(t.state));
   const totalSeedingSize = seedingTorrents.reduce((a, t) => a + t.size, 0);
   const hardlinkedCount  = enriched.filter(m => m.hardlinkStatus === 'hardlinked').length;
   const missingHardlinks = enriched.filter(m => m.filePaths.length > 0 && m.hardlinkStatus === 'not_hardlinked').length;

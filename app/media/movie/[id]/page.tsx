@@ -8,7 +8,7 @@ import {
   ArrowLeft, Film, ExternalLink, HardDrive, Shuffle, Upload, AlertTriangle,
   Bug, Check, X, RefreshCw,
 } from 'lucide-react';
-import { SeedBadge, HardlinkBadge, TypeBadge, CrossSeedBadge } from '@/components/StatusBadge';
+import { SeedStatusBadge, HardlinkBadge, TypeBadge, CrossSeedBadge } from '@/components/StatusBadge';
 import { formatBytes, formatSpeed, formatEta, cn, isCrossSeed } from '@/lib/utils';
 import type { EnrichedMedia, RadarrMovie } from '@/lib/types';
 
@@ -130,7 +130,7 @@ export default function MovieDetailPage() {
           </div>
           <div className="flex flex-wrap gap-1.5">
             <TypeBadge type="movie" />
-            <SeedBadge status={media.seedingStatus} />
+            <SeedStatusBadge status={media.seedStatus} />
             {media.hardlinkStatus !== 'unknown' && <HardlinkBadge status={media.hardlinkStatus} />}
             <CrossSeedBadge count={media.crossSeedCount} />
           </div>

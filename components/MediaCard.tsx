@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { AlertTriangle, Tv2, Film } from 'lucide-react';
-import { SeedBadge, HardlinkBadge, CrossSeedBadge } from './StatusBadge';
+import { SeedStatusBadge, HardlinkBadge, CrossSeedBadge } from './StatusBadge';
 import { formatBytes, cn } from '@/lib/utils';
 import type { EnrichedMedia } from '@/lib/types';
 
@@ -109,8 +109,8 @@ export function MediaCard({ media }: { media: EnrichedMedia }) {
         </Link>
 
         <div className="flex flex-wrap gap-1">
-          <SeedBadge status={media.seedingStatus} compact />
-          {media.hardlinkStatus === 'not_hardlinked' && (
+          <SeedStatusBadge status={media.seedStatus} compact />
+          {media.hardlinkStatus === 'not_hardlinked' && media.seedStatus === 'seed_not_hardlink' && (
             <HardlinkBadge status={media.hardlinkStatus} compact />
           )}
           <CrossSeedBadge count={media.crossSeedCount} compact />
