@@ -24,6 +24,7 @@ export function useMedia(filters?: MediaFilters) {
   return useQuery<MediaItem[]>({
     queryKey: ['media', filters],
     queryFn: () => fetch(`${API}/media${qs ? '?' + qs : ''}`).then(r => r.json()),
+    staleTime: 60_000,
     refetchInterval: 60_000,
   })
 }
@@ -41,6 +42,7 @@ export function useStats() {
   return useQuery<GlobalStats>({
     queryKey: ['stats'],
     queryFn: () => fetch(`${API}/media/stats`).then(r => r.json()),
+    staleTime: 30_000,
     refetchInterval: 30_000,
   })
 }
@@ -164,7 +166,11 @@ export function useUnmapTorrent() {
 export function useBrowse(path: string) {
   return useQuery<{ path: string; dirs: Array<{ name: string; path: string }> }>({
     queryKey: ['browse', path],
-    queryFn: () => fetch(`${API}/config/browse?path=${encodeURIComponent(path)}`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/config/browse?path=${encodeURIComponent(path)}`).then(r => {
+      if (!r.ok) throw new Error(`Dossier inaccessible (${r.status})`)
+      return r.json()
+    }),
     staleTime: 30_000,
+    retry: false,
   })
 }

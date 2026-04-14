@@ -108,4 +108,6 @@ def merge_credentials(stored: AppConfig, incoming: AppConfig) -> AppConfig:
         qbittorrent=_merge_svc(stored.qbittorrent, incoming.qbittorrent),
         crossseed=_merge_svc(stored.crossseed, incoming.crossseed),
         paths=incoming.paths,
+        scan_interval_min=incoming.scan_interval_min,
+        torrent_refresh_sec=incoming.torrent_refresh_sec,
     )

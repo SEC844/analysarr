@@ -461,8 +461,10 @@ class ScanEngine:
     async def _bg_loop(self) -> None:
         while True:
             try:
-                await asyncio.sleep(AUTO_SCAN_INTERVAL)
-                logger.info("Background scan triggered")
+                cfg = load_config()
+                interval = max(1, cfg.scan_interval_min) * 60
+                await asyncio.sleep(interval)
+                logger.info("Background scan triggered (interval=%ds)", interval)
                 await self._run_scan()
             except asyncio.CancelledError:
                 break
@@ -470,10 +472,11 @@ class ScanEngine:
                 logger.error("Background scan error: %s", e)
 
     async def _torrent_refresh_loop(self) -> None:
-        """Refresh léger : récupère uniquement la liste qBit toutes les 30 s."""
+        """Refresh léger : récupère uniquement la liste qBit selon l'intervalle configuré."""
         while True:
             try:
-                await asyncio.sleep(TORRENT_REFRESH_SECS)
+                interval = max(5, load_config().torrent_refresh_sec)
+                await asyncio.sleep(interval)
                 if self._scan_status.running:
                     continue  # le scan full s'en charge
                 cfg = load_config()

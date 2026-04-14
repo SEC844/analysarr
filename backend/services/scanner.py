@@ -98,16 +98,52 @@ def get_file_metadata(path: str) -> FileMetadata:
 
 
 def _match_torrent_to_files(torrent: QbitTorrent, file_paths: set[str]) -> bool:
-    """Vérifie si un torrent correspond à un des fichiers trouvés par path overlap."""
-    content = (torrent.content_path or torrent.save_path or "").rstrip("/")
-    if not content:
+    """
+    Vérifie si un torrent correspond à un des fichiers trouvés par path overlap.
+
+    Règle principale : content_path est utilisé seulement s'il est PLUS SPÉCIFIQUE
+    que save_path (sinon content_path == save_path = répertoire générique → faux positifs).
+
+    Fallback nom : si content_path == save_path, on compare le nom du torrent avec
+    le premier segment du chemin relatif à save_path (ex: /data/complete/<NOM>/…).
+    """
+    if not file_paths:
         return False
-    save = torrent.save_path.rstrip("/")
+
+    content = (torrent.content_path or "").rstrip("/")
+    save    = (torrent.save_path    or "").rstrip("/")
+
+    # content_path est utile seulement s'il est plus long/spécifique que save_path
+    use_content = bool(content and content != save and len(content) > len(save))
+
     for fpath in file_paths:
-        if fpath.startswith(content) or content == fpath:
-            return True
+        # ── Priorité 1 : correspondance exacte ou préfixe du content_path ──
+        if use_content:
+            if fpath == content or fpath.startswith(content + "/"):
+                return True
+
+        # ── Priorité 2 : fallback par nom de torrent ─────────────────────────
+        # Compare le nom du torrent avec le premier répertoire/fichier
+        # dans le save_path (ex : /data/complete/Avatar.2009.BluRay/…  → "Avatar 2009 BluRay")
         if save and fpath.startswith(save + "/"):
-            return True
+            rel = fpath[len(save):].lstrip("/")
+            first_seg = rel.split("/")[0] if rel else ""
+            if not first_seg:
+                continue
+            # Retire l'extension pour les torrents single-file
+            first_seg_base = os.path.splitext(first_seg)[0]
+            norm_seg  = first_seg_base.replace(".", " ").replace("_", " ").lower().strip()
+            norm_name = torrent.name.replace(".", " ").replace("_", " ").lower().strip()
+            if not norm_name or not norm_seg:
+                continue
+            # Correspondance exacte ou l'un est sous-chaîne significative de l'autre
+            if norm_name == norm_seg:
+                return True
+            if len(norm_name) > 10 and norm_seg.startswith(norm_name[:10]):
+                return True
+            if len(norm_seg) > 10 and norm_name.startswith(norm_seg[:10]):
+                return True
+
     return False
 
 

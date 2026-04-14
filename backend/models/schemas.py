@@ -56,6 +56,8 @@ class AppConfig(BaseModel):
     qbittorrent:  ServiceConfig = Field(default_factory=ServiceConfig)
     crossseed:    ServiceConfig = Field(default_factory=lambda: ServiceConfig(enabled=False))
     paths:        PathsConfig   = Field(default_factory=PathsConfig)
+    scan_interval_min:   int = 5   # intervalle du scan complet (minutes)
+    torrent_refresh_sec: int = 30  # intervalle du refresh léger qBit (secondes)
 
 
 class ServiceConfigPublic(BaseModel):
@@ -72,6 +74,8 @@ class AppConfigPublic(BaseModel):
     qbittorrent:  ServiceConfigPublic
     crossseed:    ServiceConfigPublic
     paths:        PathsConfig
+    scan_interval_min:   int = 5
+    torrent_refresh_sec: int = 30
 
 
 # ── qBittorrent ───────────────────────────────────────────────────────────────

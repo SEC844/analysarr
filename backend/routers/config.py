@@ -44,6 +44,8 @@ def _to_public(cfg: AppConfig) -> AppConfigPublic:
             has_credentials=bool(cfg.crossseed.api_key),
         ),
         paths=cfg.paths,
+        scan_interval_min=cfg.scan_interval_min,
+        torrent_refresh_sec=cfg.torrent_refresh_sec,
     )
 
 

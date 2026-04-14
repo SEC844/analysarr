@@ -15,6 +15,8 @@ const EMPTY_FORM: AppConfig = {
   qbittorrent: { url: '', username: '', password: '', api_key: '', enabled: true },
   crossseed:   { url: '', api_key: '', username: '', password: '', enabled: false },
   paths: { media: '/media', torrents: '/data/torrents', crossseed: '/data/cross-seed' },
+  scan_interval_min:   5,
+  torrent_refresh_sec: 30,
 }
 
 export default function Settings() {
@@ -39,6 +41,8 @@ export default function Settings() {
       qbittorrent: { ...prev.qbittorrent, url: config.qbittorrent.url, enabled: config.qbittorrent.enabled },
       crossseed:   { ...prev.crossseed,   url: config.crossseed.url,   enabled: config.crossseed.enabled },
       paths: config.paths,
+      scan_interval_min:   config.scan_interval_min   ?? 5,
+      torrent_refresh_sec: config.torrent_refresh_sec ?? 30,
     }))
   }, [config])
 
@@ -268,6 +272,35 @@ export default function Settings() {
             </div>
           </div>
         ))}
+      </section>
+
+      {/* ── Fréquence de rafraîchissement ────────────────────────────────── */}
+      <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+        <h2 className="font-semibold text-white">Fréquence de rafraîchissement</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Scan complet (minutes)</label>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={form.scan_interval_min}
+              onChange={e => setForm(prev => ({ ...prev, scan_interval_min: Math.max(1, Number(e.target.value)) }))}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Refresh torrents (secondes)</label>
+            <input
+              type="number"
+              min={5}
+              max={300}
+              value={form.torrent_refresh_sec}
+              onChange={e => setForm(prev => ({ ...prev, torrent_refresh_sec: Math.max(5, Number(e.target.value)) }))}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        </div>
       </section>
 
       {/* ── Sauvegarder ───────────────────────────────────────────────────── */}

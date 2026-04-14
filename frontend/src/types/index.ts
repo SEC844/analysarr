@@ -102,6 +102,8 @@ export interface AppConfig {
   qbittorrent: ServiceConfig
   crossseed:   ServiceConfig
   paths:       PathsConfig
+  scan_interval_min:   number
+  torrent_refresh_sec: number
 }
 
 export interface ServiceConfigPublic {
@@ -116,6 +118,8 @@ export interface AppConfigPublic {
   qbittorrent: ServiceConfigPublic
   crossseed:   ServiceConfigPublic
   paths:       PathsConfig
+  scan_interval_min:   number
+  torrent_refresh_sec: number
 }
 
 export interface ConnectionTestResult {
