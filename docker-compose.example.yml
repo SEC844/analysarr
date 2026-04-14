@@ -7,8 +7,10 @@ services:
     volumes:
       # Adapter les chemins à votre installation
       - /path/to/media:/media:ro
-      - /path/to/torrents:/data/torrents:ro
-      # Décommenter si vous utilisez Cross Seed :
+      # Analysarr détecte automatiquement les sous-dossiers torrents/ et cross-seed/
+      - /path/to/data:/data:ro
+      # Si auto-détection insuffisante, montages fins (décommenter) :
+      # - /path/to/torrents:/data/torrents:ro
       # - /path/to/cross-seed:/data/cross-seed:ro
       - /path/to/appdata/analysarr:/config
     environment:

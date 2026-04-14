@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -54,37 +55,41 @@ async def update_config(body: AppConfig):
 
 
 @router.post("/test/{service}", response_model=ConnectionTestResult)
-async def test_connection(service: str):
-    """Teste la connexion à un service."""
-    cfg = load_config()
+async def test_connection(service: str, body: Optional[AppConfig] = None):
+    """
+    Teste la connexion à un service.
+    Si `body` est fourni, utilise les credentials live (non sauvegardés).
+    Sinon, utilise la config sauvegardée.
+    """
+    cfg = body if body is not None else load_config()
 
     match service:
         case "radarr":
             if not cfg.radarr.url:
-                return ConnectionTestResult(service="radarr", success=False, message="URL not configured")
+                return ConnectionTestResult(service="radarr", success=False, message="URL non configurée")
             client = RadarrClient(cfg.radarr.url, cfg.radarr.api_key)
             return await client.test_connection()
 
         case "sonarr":
             if not cfg.sonarr.url:
-                return ConnectionTestResult(service="sonarr", success=False, message="URL not configured")
+                return ConnectionTestResult(service="sonarr", success=False, message="URL non configurée")
             client = SonarrClient(cfg.sonarr.url, cfg.sonarr.api_key)
             return await client.test_connection()
 
         case "qbittorrent":
             if not cfg.qbittorrent.url:
-                return ConnectionTestResult(service="qbittorrent", success=False, message="URL not configured")
+                return ConnectionTestResult(service="qbittorrent", success=False, message="URL non configurée")
             client = QBittorrentClient(cfg.qbittorrent.url, cfg.qbittorrent.username, cfg.qbittorrent.password)
             return await client.test_connection()
 
         case "crossseed":
             if not cfg.crossseed.url:
-                return ConnectionTestResult(service="crossseed", success=False, message="URL not configured")
+                return ConnectionTestResult(service="crossseed", success=False, message="URL non configurée")
             client = CrossSeedClient(cfg.crossseed.url, cfg.crossseed.api_key)
             return await client.test_connection()
 
         case _:
-            raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
+            raise HTTPException(status_code=400, detail=f"Service inconnu : {service}")
 
 
 @router.get("/browse")

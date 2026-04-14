@@ -36,10 +36,16 @@ class ScanEngine:
     def __init__(self) -> None:
         self._cache: list[MediaItem] = []
         self._scan_status = ScanStatus()
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
         self._bg_task: Optional[asyncio.Task] = None
         # Incrémental : dict path → size pour détecter les changements
         self._prev_file_sizes: dict[str, int] = {}
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Crée le lock lazily dans l'event loop courant."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     # ── Accès cache ───────────────────────────────────────────────────────────
 
@@ -70,7 +76,7 @@ class ScanEngine:
 
     async def scan_and_wait(self) -> list[MediaItem]:
         """Déclenche un scan et attend sa fin. Retourne les résultats."""
-        async with self._lock:
+        async with self._get_lock():
             await self._run_scan()
         return self._cache
 
@@ -95,9 +101,12 @@ class ScanEngine:
                 cfg.qbittorrent.url, cfg.qbittorrent.username, cfg.qbittorrent.password
             ) if cfg.qbittorrent.url else None
 
-            movies_task  = radarr_client.get_movies() if radarr_client else asyncio.coroutine(lambda: [])()
-            series_task  = sonarr_client.get_series() if sonarr_client else asyncio.coroutine(lambda: [])()
-            torrents_task = qbit_client.get_torrents() if qbit_client else asyncio.coroutine(lambda: [])()
+            async def _empty() -> list:
+                return []
+
+            movies_task   = radarr_client.get_movies()   if radarr_client else _empty()
+            series_task   = sonarr_client.get_series()   if sonarr_client else _empty()
+            torrents_task = qbit_client.get_torrents()   if qbit_client   else _empty()
 
             results = await asyncio.gather(
                 movies_task, series_task, torrents_task,

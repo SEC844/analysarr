@@ -38,7 +38,8 @@ export default function Settings() {
   }
 
   const handleTest = async (service: string) => {
-    const result = await testConn.mutateAsync(service)
+    if (!form) return
+    const result = await testConn.mutateAsync({ service, config: form })
     setTestResults(prev => ({ ...prev, [service]: result }))
   }
 
@@ -149,7 +150,7 @@ export default function Settings() {
                 disabled={testConn.isPending}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
               >
-                {testConn.isPending && testConn.variables === String(key)
+                {testConn.isPending && testConn.variables?.service === String(key)
                   ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   : null
                 }

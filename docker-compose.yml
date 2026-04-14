@@ -5,12 +5,11 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      # Bibliothèque média (lecture seule)
+      # Bibliothèque média (Radarr/Sonarr) — lecture seule
       - /mnt/user/media:/media:ro
-      # Fichiers torrents qBittorrent (lecture seule)
-      - /mnt/user/data/torrents:/data/torrents:ro
-      # Cross-seed (optionnel — commenter si non utilisé)
-      - /mnt/user/data/cross-seed:/data/cross-seed:ro
+      # Répertoire data complet — Analysarr détecte automatiquement torrents/ et cross-seed/
+      # (fonctionne si qBittorrent utilise /data/torrents, /data/complete, etc.)
+      - /mnt/user/data:/data:ro
       # Config persistante
       - /mnt/user/appdata/analysarr:/config
     environment:

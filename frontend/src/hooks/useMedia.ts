@@ -89,9 +89,13 @@ export function useSaveConfig() {
 }
 
 export function useTestConnection() {
-  return useMutation<ConnectionTestResult, Error, string>({
-    mutationFn: (service: string) =>
-      fetch(`${API}/config/test/${service}`, { method: 'POST' }).then(r => r.json()),
+  return useMutation<ConnectionTestResult, Error, { service: string; config: AppConfig }>({
+    mutationFn: ({ service, config }) =>
+      fetch(`${API}/config/test/${service}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      }).then(r => r.json()),
   })
 }
 

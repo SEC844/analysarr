@@ -1,6 +1,13 @@
 """
 Lecture / écriture de /config/settings.json.
 Le fichier est chargé une fois et mis en cache ; il est rechargé à chaque écriture.
+
+Auto-détection des chemins :
+  Si /data/torrents existe       → torrents = /data/torrents
+  Si /data/complete existe       → torrents = /data/complete
+  Si /data/downloads/complete    → torrents = /data/downloads/complete
+  Si /data/cross-seed existe     → crossseed = /data/cross-seed
+  Si /data/crossseed existe      → crossseed = /data/crossseed
 """
 from __future__ import annotations
 
@@ -20,6 +27,33 @@ def _ensure_dir() -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _autodiscover_paths() -> PathsConfig:
+    """
+    Détecte automatiquement les chemins torrents / crossseed
+    à partir du montage /data, en testant les sous-dossiers courants.
+    """
+    # Torrents : ordre de priorité
+    torrents = "/data/torrents"
+    for candidate in [
+        "/data/torrents",
+        "/data/complete",
+        "/data/downloads/complete",
+        "/data/downloads",
+    ]:
+        if Path(candidate).is_dir():
+            torrents = candidate
+            break
+
+    # Cross-seed (optionnel)
+    crossseed = "/data/cross-seed"
+    for candidate in ["/data/cross-seed", "/data/crossseed"]:
+        if Path(candidate).is_dir():
+            crossseed = candidate
+            break
+
+    return PathsConfig(media="/media", torrents=torrents, crossseed=crossseed)
+
+
 def load_config() -> AppConfig:
     global _config_cache
     if _config_cache is not None:
@@ -33,7 +67,8 @@ def load_config() -> AppConfig:
         except Exception:
             pass  # fall through to default
 
-    _config_cache = AppConfig()
+    # Pas de config sauvegardée → auto-détection
+    _config_cache = AppConfig(paths=_autodiscover_paths())
     return _config_cache
 
 
