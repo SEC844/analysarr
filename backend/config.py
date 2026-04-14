@@ -1,0 +1,49 @@
+"""
+Lecture / écriture de /config/settings.json.
+Le fichier est chargé une fois et mis en cache ; il est rechargé à chaque écriture.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Optional
+
+from .models.schemas import AppConfig, ServiceConfig, PathsConfig
+
+CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/config/settings.json"))
+
+_config_cache: Optional[AppConfig] = None
+
+
+def _ensure_dir() -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def load_config() -> AppConfig:
+    global _config_cache
+    if _config_cache is not None:
+        return _config_cache
+
+    if CONFIG_PATH.exists():
+        try:
+            raw = json.loads(CONFIG_PATH.read_text("utf-8"))
+            _config_cache = AppConfig.model_validate(raw)
+            return _config_cache
+        except Exception:
+            pass  # fall through to default
+
+    _config_cache = AppConfig()
+    return _config_cache
+
+
+def save_config(cfg: AppConfig) -> None:
+    global _config_cache
+    _ensure_dir()
+    CONFIG_PATH.write_text(cfg.model_dump_json(indent=2), encoding="utf-8")
+    _config_cache = cfg
+
+
+def invalidate_cache() -> None:
+    global _config_cache
+    _config_cache = None

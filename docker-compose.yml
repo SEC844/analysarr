@@ -1,0 +1,24 @@
+services:
+  analysarr:
+    image: ghcr.io/sec844/analysarr:latest
+    container_name: analysarr
+    ports:
+      - "8080:8080"
+    volumes:
+      # Bibliothèque média (lecture seule)
+      - /mnt/user/media:/media:ro
+      # Fichiers torrents qBittorrent (lecture seule)
+      - /mnt/user/data/torrents:/data/torrents:ro
+      # Cross-seed (optionnel — commenter si non utilisé)
+      - /mnt/user/data/cross-seed:/data/cross-seed:ro
+      # Config persistante
+      - /mnt/user/appdata/analysarr:/config
+    environment:
+      - CONFIG_PATH=/config/settings.json
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/scan/status')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

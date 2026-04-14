@@ -1,19 +1,16 @@
-version: "3.8"
-
 services:
   analysarr:
-    image: ghcr.io/SEC844/analysarr:latest
+    build: .
     container_name: analysarr
     ports:
-      - "3000:3000"
+      - "8080:8080"
     volumes:
-      - /mnt/user/data:/data:ro              # qBittorrent download root (read-only)
-      - /mnt/user/media:/media:ro            # Radarr / Sonarr media root (read-only)
-      - /mnt/user/appdata/analysarr:/config  # Persistent config (credentials, path mappings)
+      # Adapter les chemins à votre installation
+      - /path/to/media:/media:ro
+      - /path/to/torrents:/data/torrents:ro
+      # Décommenter si vous utilisez Cross Seed :
+      # - /path/to/cross-seed:/data/cross-seed:ro
+      - /path/to/appdata/analysarr:/config
+    environment:
+      - CONFIG_PATH=/config/settings.json
     restart: unless-stopped
-    networks:
-      - media
-
-networks:
-  media:
-    external: true

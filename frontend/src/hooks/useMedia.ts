@@ -1,0 +1,124 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import type { MediaItem, GlobalStats, ScanStatus, AppConfig, ConnectionTestResult, UnmatchedTorrent, QbitTorrent } from '../types'
+
+const API = '/api'
+
+// ── Media ─────────────────────────────────────────────────────────────────────
+
+export interface MediaFilters {
+  status?:     string
+  source?:     string
+  media_type?: string
+  search?:     string
+}
+
+export function useMedia(filters?: MediaFilters) {
+  const params = new URLSearchParams()
+  if (filters?.status)     params.set('status',     filters.status)
+  if (filters?.source)     params.set('source',     filters.source)
+  if (filters?.media_type) params.set('media_type', filters.media_type)
+  if (filters?.search)     params.set('search',     filters.search)
+
+  const qs = params.toString()
+  return useQuery<MediaItem[]>({
+    queryKey: ['media', filters],
+    queryFn: () => fetch(`${API}/media${qs ? '?' + qs : ''}`).then(r => r.json()),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useMediaDetail(id: string) {
+  return useQuery<MediaItem>({
+    queryKey: ['media', id],
+    queryFn: () => fetch(`${API}/media/${id}`).then(r => r.json()),
+    staleTime: 30_000,
+    enabled: !!id,
+  })
+}
+
+export function useStats() {
+  return useQuery<GlobalStats>({
+    queryKey: ['stats'],
+    queryFn: () => fetch(`${API}/media/stats`).then(r => r.json()),
+    refetchInterval: 30_000,
+  })
+}
+
+// ── Scan ──────────────────────────────────────────────────────────────────────
+
+export function useScanStatus() {
+  return useQuery<ScanStatus>({
+    queryKey: ['scan-status'],
+    queryFn: () => fetch(`${API}/scan/status`).then(r => r.json()),
+    refetchInterval: 5_000,
+  })
+}
+
+export function useTriggerScan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => fetch(`${API}/scan/trigger`, { method: 'POST' }).then(r => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
+    },
+  })
+}
+
+// ── Config ────────────────────────────────────────────────────────────────────
+
+export function useConfig() {
+  return useQuery<AppConfig>({
+    queryKey: ['config'],
+    queryFn: () => fetch(`${API}/config/full`).then(r => r.json()),
+    staleTime: Infinity,
+  })
+}
+
+export function useSaveConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (cfg: AppConfig) =>
+      fetch(`${API}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      }).then(r => r.json()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['config'] }),
+  })
+}
+
+export function useTestConnection() {
+  return useMutation<ConnectionTestResult, Error, string>({
+    mutationFn: (service: string) =>
+      fetch(`${API}/config/test/${service}`, { method: 'POST' }).then(r => r.json()),
+  })
+}
+
+// ── Torrents ──────────────────────────────────────────────────────────────────
+
+export function useTorrents() {
+  return useQuery<QbitTorrent[]>({
+    queryKey: ['torrents'],
+    queryFn: () => fetch(`${API}/torrents`).then(r => r.json()),
+    refetchInterval: 30_000,
+  })
+}
+
+export function useUnmatchedTorrents() {
+  return useQuery<UnmatchedTorrent[]>({
+    queryKey: ['torrents-unmatched'],
+    queryFn: () => fetch(`${API}/torrents/unmatched`).then(r => r.json()),
+    staleTime: 60_000,
+  })
+}
+
+// ── Browse filesystem ────────────────────────────────────────────────────────
+
+export function useBrowse(path: string) {
+  return useQuery<{ path: string; dirs: Array<{ name: string; path: string }> }>({
+    queryKey: ['browse', path],
+    queryFn: () => fetch(`${API}/config/browse?path=${encodeURIComponent(path)}`).then(r => r.json()),
+    staleTime: 30_000,
+  })
+}
