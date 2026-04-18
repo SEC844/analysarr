@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import config, media, scan, torrents
+from .routers import config, crossseed, media, scan, torrents
 from .services.engine import engine
 
 logging.basicConfig(
@@ -57,10 +57,11 @@ app.add_middleware(
 )
 
 # ── Routers API ───────────────────────────────────────────────────────────────
-app.include_router(config.router, prefix="/api")
-app.include_router(media.router,  prefix="/api")
-app.include_router(scan.router,   prefix="/api")
-app.include_router(torrents.router, prefix="/api")
+app.include_router(config.router,    prefix="/api")
+app.include_router(media.router,     prefix="/api")
+app.include_router(scan.router,      prefix="/api")
+app.include_router(torrents.router,  prefix="/api")
+app.include_router(crossseed.router, prefix="/api")
 
 # ── Poster proxy ──────────────────────────────────────────────────────────────
 # (déjà dans torrents.router mais on l'expose proprement)

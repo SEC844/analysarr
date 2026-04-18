@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Film, Tv2, HardDrive, ExternalLink, AlertTriangle } from 'lucide-react'
-import { useMediaDetail } from '../hooks/useMedia'
+import { ArrowLeft, Film, Tv2, HardDrive, ExternalLink, AlertTriangle, Radar, Check, X, Loader2 } from 'lucide-react'
+import { useMediaDetail, useTriggerCrossseed } from '../hooks/useMedia'
 import { StatusBadge } from '../components/StatusBadge'
 import { cn, formatBytes, formatSpeed, formatEta, QBIT_STATE_LABELS } from '../types'
 
@@ -258,8 +259,71 @@ function TorrentRow({ torrent: t }: { torrent: import('../types').QbitTorrent })
           </code>
         </div>
       )}
-      {t.tracker && (
-        <p className="text-xs text-zinc-600 truncate">Tracker : {t.tracker}</p>
+      <div className="flex items-center justify-between gap-2">
+        {t.tracker ? (
+          <p className="text-xs text-zinc-600 truncate">Tracker : {t.tracker}</p>
+        ) : <span />}
+        <CrossseedTriggerButton hash={t.hash} />
+      </div>
+    </div>
+  )
+}
+
+function CrossseedTriggerButton({ hash }: { hash: string }) {
+  const trigger = useTriggerCrossseed()
+  const [status, setStatus] = useState<'idle' | 'ok' | 'err'>('idle')
+  const [message, setMessage] = useState<string>('')
+
+  const handleClick = () => {
+    setStatus('idle')
+    setMessage('')
+    trigger.mutate(hash, {
+      onSuccess: (data) => {
+        setStatus(data.success ? 'ok' : 'err')
+        setMessage(data.message ?? '')
+      },
+      onError: (err) => {
+        setStatus('err')
+        setMessage(err.message)
+      },
+    })
+  }
+
+  const disabled = trigger.isPending
+  const Icon = trigger.isPending
+    ? Loader2
+    : status === 'ok'
+    ? Check
+    : status === 'err'
+    ? X
+    : Radar
+
+  const btnClasses = cn(
+    'inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
+    'disabled:cursor-not-allowed disabled:opacity-60',
+    status === 'ok'
+      ? 'border-green-800 bg-green-900/40 text-green-300 hover:bg-green-900/60'
+      : status === 'err'
+      ? 'border-red-800 bg-red-900/40 text-red-300 hover:bg-red-900/60'
+      : 'border-cyan-800 bg-cyan-900/30 text-cyan-300 hover:bg-cyan-900/50',
+  )
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={disabled}
+        title="Déclencher une recherche cross-seed pour ce torrent"
+        className={btnClasses}
+      >
+        <Icon className={cn('h-3.5 w-3.5', trigger.isPending && 'animate-spin')} />
+        {trigger.isPending ? 'Recherche…' : 'Déclencher cross-seed'}
+      </button>
+      {message && status !== 'idle' && (
+        <span className={cn('max-w-[220px] truncate text-[10px]', status === 'ok' ? 'text-green-400' : 'text-red-400')}>
+          {message}
+        </span>
       )}
     </div>
   )

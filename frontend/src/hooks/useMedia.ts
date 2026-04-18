@@ -168,6 +168,32 @@ export function useUnmapTorrent() {
   })
 }
 
+// ── Cross-seed ───────────────────────────────────────────────────────────────
+
+export interface CrossseedTriggerResult {
+  success: boolean
+  status:  number
+  message: string
+}
+
+/**
+ * Déclenche une recherche cross-seed pour un torrent donné.
+ * POST /api/crossseed/trigger/{torrent_hash}
+ */
+export function useTriggerCrossseed() {
+  return useMutation<CrossseedTriggerResult, Error, string>({
+    mutationFn: (torrentHash: string) =>
+      fetch(`${API}/crossseed/trigger/${torrentHash}`, { method: 'POST' })
+        .then(async r => {
+          const data = await r.json().catch(() => ({}))
+          if (!r.ok) {
+            throw new Error(data?.detail ?? data?.message ?? `HTTP ${r.status}`)
+          }
+          return data as CrossseedTriggerResult
+        }),
+  })
+}
+
 // ── Browse filesystem ────────────────────────────────────────────────────────
 
 export function useBrowse(path: string) {
