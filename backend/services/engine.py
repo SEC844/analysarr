@@ -34,6 +34,12 @@ AUTO_SCAN_INTERVAL    = 300  # secondes (5 min)
 TORRENT_REFRESH_SECS  = 30   # refresh léger qBit uniquement
 QBIT_SEEDING_STATES   = frozenset(["seeding","stalledUP","forcedUP","queuedUP","uploading","checkingUP"])
 
+# Extensions vidéo reconnues pour identifier les fichiers épisodes dans une série
+VIDEO_EXTENSIONS = frozenset([
+    '.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.wmv',
+    '.mpg', '.mpeg', '.divx', '.m2ts', '.vob', '.flv', '.webm',
+])
+
 # Candidats pour l'auto-détection du répertoire torrents
 _TORRENTS_CANDIDATES = [
     "/data/torrents",
@@ -409,63 +415,114 @@ class ScanEngine:
         if not show.path:
             return item
 
-        largest = await asyncio.get_event_loop().run_in_executor(
-            None, self._find_largest_file, show.path
+        # Collect ALL video files in the series directory (one per episode).
+        # Unlike movies (1 file = 1 reference), a series can have hundreds of
+        # episode files each belonging to a different torrent. Checking only the
+        # largest file would miss every other episode's torrent association.
+        video_files = await asyncio.get_event_loop().run_in_executor(
+            None, self._find_video_files, show.path
         )
 
-        if not largest:
+        if not video_files:
             dir_stat = await asyncio.get_event_loop().run_in_executor(
                 None, get_file_metadata, show.path
             )
             item.media_file = dir_stat
             return item
 
-        item.media_file = largest
+        # Representative file shown in the UI = the largest episode file
+        item.media_file = max(video_files, key=lambda f: f.size)
 
-        # Classification O(1) via index
-        result = classify_media_file(largest, torrent_index, crossseed_index, qbit_torrents)
+        # Classify every episode file and aggregate the results.
+        # Use dicts keyed by torrent hash to deduplicate across episodes.
+        agg_matched:    dict[str, QbitTorrent] = {}
+        agg_duplicates: dict[str, QbitTorrent] = {}
+        agg_torrent_files:   list[FileMetadata] = []
+        agg_duplicate_files: list[FileMetadata] = []
+        agg_crossseed_files: list[FileMetadata] = []
+        any_hardlinked   = False
+        any_cross_seeded = False
+        any_duplicate    = False
 
-        item.seed_status        = result["seed_status"]
-        item.is_hardlinked      = result["is_hardlinked"]
-        item.is_cross_seeded    = result["is_cross_seeded"]
-        item.is_duplicate       = result["is_duplicate"]
-        item.torrents_files     = result["torrents_files"]
-        item.duplicate_files    = result["duplicate_files"]
-        item.crossseed_files    = result["crossseed_files"]
-        item.matched_torrents   = result["matched_torrents"]
-        item.duplicate_torrents = result["duplicate_torrents"]
+        for vf in video_files:
+            r = classify_media_file(vf, torrent_index, crossseed_index, qbit_torrents)
+            for t in r["matched_torrents"]:
+                agg_matched[t.hash] = t
+            for t in r["duplicate_torrents"]:
+                agg_duplicates[t.hash] = t
+            agg_torrent_files.extend(r["torrents_files"])
+            agg_duplicate_files.extend(r["duplicate_files"])
+            agg_crossseed_files.extend(r["crossseed_files"])
+            if r["is_hardlinked"]:
+                any_hardlinked = True
+            if r["is_cross_seeded"]:
+                any_cross_seeded = True
+            if r["is_duplicate"]:
+                any_duplicate = True
 
-        for t in result["matched_torrents"] + result["duplicate_torrents"]:
+        matched_torrents   = list(agg_matched.values())
+        duplicate_torrents = list(agg_duplicates.values())
+
+        # Derive overall seed_status from the aggregated picture
+        if not matched_torrents:
+            seed_status = SeedStatus.NOT_SEEDING
+        elif any_hardlinked and any_cross_seeded:
+            seed_status = SeedStatus.SEED_OK
+        elif any_hardlinked:
+            seed_status = SeedStatus.SEED_NO_CS
+        elif any_duplicate:
+            seed_status = SeedStatus.SEED_DUPLICATE
+        else:
+            seed_status = SeedStatus.SEED_NOT_HARDLINK
+
+        item.seed_status        = seed_status
+        item.is_hardlinked      = any_hardlinked
+        item.is_cross_seeded    = any_cross_seeded
+        item.is_duplicate       = any_duplicate
+        item.torrents_files     = agg_torrent_files
+        item.duplicate_files    = agg_duplicate_files
+        item.crossseed_files    = agg_crossseed_files
+        item.matched_torrents   = matched_torrents
+        item.duplicate_torrents = duplicate_torrents
+
+        for t in matched_torrents + duplicate_torrents:
             matched_hashes.add(t.hash)
 
         return item
 
-    def _find_largest_file(self, directory: str) -> Optional[FileMetadata]:
-        """Trouve le plus gros fichier dans un répertoire (récursif, max 5 niveaux)."""
-        largest: Optional[FileMetadata] = None
+    def _find_video_files(self, directory: str) -> list[FileMetadata]:
+        """
+        Retourne tous les fichiers vidéo dans un répertoire (récursif, max 5 niveaux).
+
+        Filtre par extension pour ne conserver que les fichiers épisodes réels
+        et ignorer les sous-titres, NFO, artwork, etc.
+        """
+        files: list[FileMetadata] = []
         base_depth = directory.rstrip(os.sep).count(os.sep)
 
-        for root, dirs, files in os.walk(directory):
+        for root, dirs, fnames in os.walk(directory):
             depth = root.count(os.sep) - base_depth
             if depth >= 5:
                 dirs.clear()
                 continue
-            for fname in files:
+            for fname in fnames:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in VIDEO_EXTENSIONS:
+                    continue
                 fpath = os.path.join(root, fname)
                 try:
-                    stat = os.stat(fpath)
-                    if largest is None or stat.st_size > largest.size:
-                        largest = FileMetadata(
-                            path=fpath,
-                            size=stat.st_size,
-                            inode=stat.st_ino,
-                            nlink=stat.st_nlink,
-                            exists=True,
-                        )
+                    st = os.stat(fpath)
+                    files.append(FileMetadata(
+                        path=fpath,
+                        size=st.st_size,
+                        inode=st.st_ino,
+                        nlink=st.st_nlink,
+                        exists=True,
+                    ))
                 except OSError:
                     continue
 
-        return largest
+        return files
 
     def _extract_poster(self, images: list[dict], source: str, media_id: int) -> Optional[str]:
         """Retourne l'URL du poster proxié via notre API."""

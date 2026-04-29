@@ -33,6 +33,11 @@ class SonarrClient:
             ep_count = stats.get("episodeFileCount", 0)
             if ep_count == 0:
                 continue
+            alt_titles = [
+                alt.get("title", "")
+                for alt in s.get("alternateTitles", [])
+                if alt.get("title")
+            ]
             series.append(SonarrSeries(
                 id=s["id"],
                 title=s.get("title", ""),
@@ -44,6 +49,7 @@ class SonarrClient:
                 size_on_disk=stats.get("sizeOnDisk", 0),
                 title_slug=s.get("titleSlug", ""),
                 images=s.get("images", []),
+                alternate_titles=alt_titles,
             ))
         return series
 

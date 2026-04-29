@@ -114,6 +114,7 @@ class RadarrMovie(BaseModel):
     file_size: int = 0
     title_slug: str = ""
     images:    list[dict] = Field(default_factory=list)
+    alternate_titles: list[str] = Field(default_factory=list)
 
 
 # ── Sonarr ────────────────────────────────────────────────────────────────────
@@ -129,6 +130,7 @@ class SonarrSeries(BaseModel):
     size_on_disk:       int = 0
     title_slug:         str = ""
     images:             list[dict] = Field(default_factory=list)
+    alternate_titles:   list[str] = Field(default_factory=list)
 
 
 class SonarrEpisodeFile(BaseModel):

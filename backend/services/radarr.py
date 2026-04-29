@@ -33,6 +33,11 @@ class RadarrClient:
             if not m.get("hasFile"):
                 continue
             mf = m.get("movieFile") or {}
+            alt_titles = [
+                alt.get("title", "")
+                for alt in m.get("alternateTitles", [])
+                if alt.get("title")
+            ]
             movies.append(RadarrMovie(
                 id=m["id"],
                 title=m.get("title", ""),
@@ -44,6 +49,7 @@ class RadarrClient:
                 file_size=mf.get("size", 0),
                 title_slug=m.get("titleSlug", ""),
                 images=m.get("images", []),
+                alternate_titles=alt_titles,
             ))
         return movies
 
